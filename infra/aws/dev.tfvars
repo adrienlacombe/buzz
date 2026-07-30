@@ -47,6 +47,15 @@ require_relay_membership = false
 # already in the image, so this only enables the route.
 serve_git_web_gui = true
 
+# ── NIP-SW Starknet wallet bindings ──────────────────────────────────────────
+# Endpoint the relay calls to verify kind:30178 attestations at ingest. Public
+# node, no API key, so it belongs in this committed file. Verified live:
+# starknet_chainId returns 0x534e5f4d41494e, i.e. genuinely mainnet.
+#
+# Verification fails closed — blank here means every SN_MAIN binding is rejected
+# rather than stored unverified.
+starknet_rpc_sn_main = "https://mainnet.nodes.starknet.org/rpc/v0_10"
+
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
 

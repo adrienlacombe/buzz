@@ -260,3 +260,26 @@ variable "force_destroy_media_bucket" {
   type        = bool
   default     = false
 }
+
+# ── NIP-SW Starknet wallet bindings ──────────────────────────────────────────
+
+variable "starknet_rpc_sn_main" {
+  description = <<-EOT
+    BUZZ_STARKNET_RPC_SN_MAIN. Starknet mainnet JSON-RPC endpoint the relay calls
+    to verify NIP-SW wallet-binding attestations (kind:30178) at ingest.
+
+    Verification FAILS CLOSED. Left empty, the relay rejects every SN_MAIN
+    binding rather than storing one it could not check — the intended default,
+    since a stored binding is supposed to mean an attested one.
+
+    Operator-configured on purpose. A submitted event must never influence which
+    endpoint is trusted, or an attacker could point verification at a node that
+    answers VALID to everything.
+
+    Public endpoint, so a plain env var rather than a Secrets Manager entry. If
+    you move to a provider that embeds an API key in the URL, move this to the
+    `secrets` block in ecs.tf instead.
+  EOT
+  type        = string
+  default     = ""
+}

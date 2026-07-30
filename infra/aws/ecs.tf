@@ -173,6 +173,11 @@ resource "aws_ecs_task_definition" "relay" {
 
       { name = "BUZZ_GIT_REPO_PATH", value = local.git_repo_path },
 
+      # NIP-SW (kind:30178) attestation verification. Empty disables SN_MAIN
+      # bindings entirely: the relay's from_env() skips blank values, and an
+      # unconfigured chain is rejected rather than stored unverified.
+      { name = "BUZZ_STARKNET_RPC_SN_MAIN", value = var.starknet_rpc_sn_main },
+
       { name = "RUST_LOG", value = var.log_level },
     ]
 
