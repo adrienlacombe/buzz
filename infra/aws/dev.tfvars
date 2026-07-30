@@ -38,10 +38,24 @@ relay_desired_count = 1
 # to hex first; a plan-time validation rejects anything that is not 64-hex.
 owner_pubkey = "8dae5a92916c512029ad1534fcf264e0e2e33ce492acf34588bc6268f7570dd5"
 
-# Restricts the relay to pubkeys in its membership table, so NIP-42 auth alone is
-# not enough to use it. The owner above is bootstrapped as a member at startup and
-# admits everyone else, so this does not lock the owner out.
-require_relay_membership = true
+# FALSE on purpose: this relay is public. Anyone may join with their own key, or
+# let Buzz generate one (desktop does this automatically on first run --
+# app_state.rs:343 keyring -> identity.key -> generate + save).
+#
+# Turning this on would gate *all* access on the membership table, which is the
+# opposite of a public relay. It does NOT control who can grant admin -- that is
+# enforced independently in the relay and needs no configuration:
+#
+#   kind:9032 role change   "Only owners may change roles" (relay_admin.rs:369)
+#   setting role = owner    blocked outright; transfer only via RELAY_OWNER_PUBKEY
+#   adding an admin member  requires owner (relay_admin.rs:273)
+#   admins removing people  members only, never admins or the owner
+#   invite links            DB CHECK pins role = 'member' (migration 0025)
+#   non-members             sender_role falls back to "" and fails every check
+#
+# So owner_pubkey above is the whole admin story: only that key can create admins,
+# whether membership enforcement is on or off.
+require_relay_membership = false
 
 # Browser repo UI at https://relay.bitcoinmarkets.app/repos. The web assets are
 # already in the image, so this only enables the route.
