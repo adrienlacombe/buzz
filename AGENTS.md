@@ -6,6 +6,114 @@ code style, PR process, architecture), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+<!-- FORK-LOCAL SECTION — not present in block/buzz. Keep as one contiguous
+     block so upstream syncs conflict here predictably or not at all. -->
+
+## ⚠️ You are working in a fork that syncs from upstream daily
+
+This checkout is **`adrienlacombe/buzz`**, a fork of `block/buzz`. A scheduled
+agentic workflow merges upstream into this fork **every day at 02:00 UTC**, so
+every local edit is something a future merge has to reconcile. Work accordingly.
+
+### The rule that follows from that
+
+**Prefer changes that live outside tracked files.** Repo variables, secrets, and
+workflow enable/disable states cost nothing at merge time. A file edit is a
+permanent conflict surface in a file upstream also edits.
+
+When a file edit is genuinely unavoidable:
+
+- Mark it `FORK-LOCAL PATCH (adrienlacombe/buzz)` with a comment explaining what
+  broke without it. Conflict resolution six months from now depends on that
+  reasoning being written down.
+- Keep it to one small contiguous hunk. Do not reformat or reorganise
+  surrounding code — every extra changed line is another place to conflict.
+- Never opportunistically "fix" unrelated upstream code. It multiplies conflicts
+  and the fix belongs upstream anyway.
+- If it is a genuine upstream bug, consider sending it to `block/buzz` instead of
+  carrying the patch. A merged upstream fix removes divergence permanently.
+
+### How the sync works
+
+`.github/workflows/upstream-sync.md` (compiled to `.lock.yml`) runs Copilot on a
+daily schedule. It fetches `block/buzz`, exits early if this fork is not behind,
+and otherwise performs a real `git merge` — merge commit preserved, never
+squashed — so upstream history stays intact and the next run can tell what is
+already merged.
+
+- Clean or resolved merges arrive as an `[upstream-sync]` **pull request**.
+- Genuinely ambiguous conflicts abort the merge and file an **issue** instead of
+  guessing.
+- The agent runs with `contents: read` and never pushes to `main`; commits are
+  bundled for a separate safe-outputs job that opens the PR.
+- Issue **#1 `[aw] No-Op Runs`** collects a comment per quiet day. Silence there
+  means the workflow itself has stopped working.
+
+**Reviewing a sync PR:** read its *Conflicts* and *Needs a human look* sections
+before merging. When a conflict lands in one of the patched files below, the
+resolution is nearly always *keep our marked line, take upstream's everything
+else*.
+
+### Fork-local file patches
+
+These files differ from `block/buzz`. Each carries a `FORK-LOCAL` comment in
+place.
+
+| File | Change | Why |
+|------|--------|-----|
+| `.github/workflows/upstream-sync.md` + `.lock.yml` | new | The daily sync itself |
+| `.github/workflows/macos-canary.yml` | new | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run |
+| `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
+| `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
+| `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | Root lock pins `tag=v0.73.1` (`43103c5c`), desktop pins `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit |
+| `docker.yml` | `PUSH_GATEWAY_IMAGE` override; owner-correct attestation hint | Push-gateway image was hardcoded to `ghcr.io/block/buzz-push-gateway` in nine places, so `GHCR_IMAGE` could not retarget it |
+| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository` | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates |
+| `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
+
+The `RELEASE_REPO` pattern means opting in or out is a **variable** change, not a
+file edit — delete the variable to restore upstream behavior without reverting
+any commit.
+
+### Repo settings (no file changes — preferred mechanism)
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `GHCR_IMAGE` | `ghcr.io/adrienlacombe/buzz` | Retarget relay images to this namespace |
+| `GHCR_PUSH_GATEWAY_IMAGE` | `ghcr.io/adrienlacombe/buzz-push-gateway` | Same for the push gateway |
+| `RELEASE_REPO` | `adrienlacombe/buzz` | Opts this fork into the guarded release/canary jobs |
+| Issues | **enabled** | Off by default on forks; the sync workflow's conflict-escalation output needs them |
+| `Auto-tag on Release PR Merge` | **disabled** | Fires on every merged same-repo PR. A sync PR carrying a `deploy/charts/buzz/Chart.yaml` version bump hits its default lane and tries to mint a token from the `BUZZ_RELEASE_TAGGER` GitHub App, which does not exist here |
+| `sprig-latest` release | **created manually** | `sprig.yml`'s rolling lane calls `gh release edit sprig-latest` with no create-if-missing fallback. Forks inherit no releases, so it failed on every push to `main` until the release existed |
+
+Secrets set here: `COPILOT_GITHUB_TOKEN` (sync engine),
+`TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` and `BUZZ_UPDATER_PUBLIC_KEY` (fork's
+own throwaway updater keypair — unrelated to Block's).
+
+### What cannot work in a fork
+
+Do not spend time trying to make these pass; they are structural, not
+misconfiguration.
+
+- **macOS signing / notarization** — `release.yml`'s two macOS jobs and
+  `signed-macos-canary.yml` use `block/apple-codesign-action`, a client for
+  Block's internal codesigning service (`codesign_helper` Lambda + Buildkite)
+  reached via an OIDC AWS role. The Apple certificate lives inside that Lambda,
+  so **no secret a fork could supply makes it work.** Those jobs are left pinned
+  to `block/buzz` so they skip instead of burning macOS runner time before
+  failing. Use `macos-canary.yml` for an unsigned build; notarization needs
+  either Block's #mdx-ios provisioning or a paid Apple Developer ID wired in
+  directly.
+- **Mobile release** — `mobile-release-candidate.yml` is dispatch-only, wants an
+  exact `block/buzz` main SHA, and hands off to the private
+  `squareup/sprout-releases` Buildkite pipeline.
+
+Known-still-hardcoded upstream, not yet patched here: `helm-chart.yml` has a
+`GHCR_CHART_REPO` override but `push-gateway-helm-chart.yml` hardcodes
+`CHART_REPO` (`:20`), and `signed-macos-canary.yml:104` still carries the
+root-lockfile mesh-llm bug fixed in `ci.yml`.
+
+---
+
 ## Ecosystem
 
 Buzz spans five repos. This one (`block/buzz`) is the OSS source for the relay, desktop, mobile, and CLI. The others handle internal builds and deployment:
