@@ -88,7 +88,7 @@ place.
 | File | Change | Why |
 |------|--------|-----|
 | `.github/workflows/upstream-sync.md` + `.lock.yml` | new | The daily sync itself |
-| `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled |
+| `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | Root lock pins `tag=v0.73.1` (`43103c5c`), desktop pins `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit |
@@ -106,10 +106,29 @@ place.
 | `mobile/lib/shared/relay/relay_validation.dart` | allowlist call after the shape checks | One hunk covers all four invite/deep-link call sites; placed after the existing checks so malformed input keeps its original error |
 | `mobile/lib/features/pairing/pairing_provider.dart` | allowlist call in `_validateRelayUrl` | QR pairing is a separate entry point from invites |
 | `mobile/lib/shared/relay/relay.dart` | export of `relay_allowlist.dart` | Barrel re-export |
+| `desktop/src-tauri/tauri.conf.json` | `productName` `Buzz` → `BitcoinMarkets` | Names the `.app` bundle and the DMG filename. **The one divergence carrying no in-file marker** — JSON takes no comments — so a sync reviewer has only this row to go on |
+| `mobile/ios/Flutter/Debug.xcconfig`, `Release.xcconfig` | `APP_DISPLAY_NAME = BitcoinMarkets` | iOS home-screen name, debug and release |
+| `mobile/android/app/build.gradle.kts` | `app_name` resValue → `BitcoinMarkets`, in `defaultConfig` and the worktree-debug branch | Android launcher label. Two hunks because the worktree label composes onto the same string |
+| `scripts/mobile-worktree-overrides.sh` | branch-labelled debug name | Generates the gitignored per-worktree `APP_DISPLAY_NAME` |
+| `scripts/test-mobile-worktree-overrides.sh` | assertions derive the production name from `mobile-worktree-overrides.sh` instead of matching the literal `Buzz` | Four assertions hardcoded `Buzz` and **failed CI on `main` for three commits** after the rename (`ff5e83c28`…`684a15f50`), cascading into `Desktop` and `Desktop E2E Integration` through their gate steps. Deriving the name tests the contract the file is for — release unlabelled, debug labelled, iOS and Android agreeing — so a future rename cannot fail it for the wrong reason |
 
 The `RELEASE_REPO` pattern means opting in or out is a **variable** change, not a
 file edit — delete the variable to restore upstream behavior without reverting
 any commit.
+
+The brand rename is **display names only**. Bundle identifiers are deliberately
+untouched (`xyz.block.buzz.app`, `com.buzz.buzzMobile`) so existing installs keep
+upgrading and the desktop app-data directory — which holds the `identity.key`
+keyring fallback — does not move. `mobile/pubspec.yaml`'s `name: buzz` is the Dart
+package name behind every `package:buzz/...` import, not a user-visible string, and
+must stay. When a sync conflicts in one of these files, keep our marked line and
+take upstream's everything else; when it conflicts in `tauri.conf.json`, keep
+`productName` and take upstream's `version`.
+
+`signed-macos-canary.yml` and `release.yml`'s `release` job still hardcode
+`Buzz.app`, left unpatched on purpose: both are guarded
+`github.repository == 'block/buzz'` and cannot run here, so patching them would add
+conflict surface for code that never executes. They would break if ever enabled.
 
 `infra/aws/` is additive-only by construction — it edits no upstream file. If an
 upstream sync ever conflicts there, something has gone wrong; do not resolve it by
