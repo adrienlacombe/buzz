@@ -69,8 +69,15 @@ cd bootstrap && terraform init && terraform apply && cd ..
 
 # 2. Deploy. dev.tfvars is committed and canonical — edit it in place rather
 #    than copying it, so CI and local applies stay in agreement.
+#
+#    relay_image is REQUIRED and has no default: CD owns which build runs, and a
+#    default here meant every local apply silently reverted CD's deploy. Pass the
+#    image explicitly. To keep whatever is currently deployed:
 terraform init
-terraform plan -var-file=dev.tfvars -out plan.tfplan    # read it
+IMAGE=$(aws ecs describe-task-definition --task-definition buzz-dev-relay \
+  --region eu-west-3 --query 'taskDefinition.containerDefinitions[0].image' --output text)
+
+terraform plan -var-file=dev.tfvars -var relay_image="$IMAGE" -out plan.tfplan   # read it
 terraform apply plan.tfplan
 
 # 4. Set the relay identity key. The service crash-loops until you do —

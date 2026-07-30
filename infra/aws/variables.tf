@@ -16,9 +16,6 @@ variable "aws_profile" {
   default     = "alc-tf"
 }
 
-
-
-
 variable "project_name" {
   description = "Short name prefixed onto every resource."
   type        = string
@@ -62,9 +59,35 @@ variable "relay_subdomain" {
 # ── Relay container ──────────────────────────────────────────────────────────
 
 variable "relay_image" {
-  description = "Relay container image. Public GHCR image needs no pull secret."
+  description = <<-EOT
+    Relay container image. Public GHCR image needs no pull secret.
+
+    REQUIRED — deliberately no default, so `terraform apply` fails closed rather
+    than silently changing which build is running.
+
+    CD owns this value: deploy-aws.yml passes the commit's immutable
+    ghcr.io/<owner>/buzz:sha-<7> tag. With a default here, any local apply for an
+    unrelated reason (flipping a flag, editing a size) also rewrote the image
+    field — reverting whatever CD had deployed to a mutable :main tag, with no
+    indication that a deploy had just been undone. Two writers with different
+    views of one field.
+
+    A local apply must therefore say which image it means. To keep what is
+    currently deployed:
+
+      terraform apply -var-file=dev.tfvars -var relay_image="$(
+        aws ecs describe-task-definition --task-definition buzz-dev-relay \
+          --profile alc-tf --region eu-west-3 \
+          --query 'taskDefinition.containerDefinitions[0].image' --output text)"
+  EOT
   type        = string
-  default     = "ghcr.io/block/buzz:main"
+
+  validation {
+    # A mutable tag defeats the point of recording what is deployed. Warn-by-error
+    # on :main / :latest so a local apply cannot quietly un-pin the deployment.
+    condition     = !can(regex(":(main|latest)$", var.relay_image))
+    error_message = "relay_image must not use a mutable tag (:main, :latest) — pass an immutable ghcr.io/<owner>/buzz:sha-<7> tag so the running build is recorded. CD does this automatically."
+  }
 }
 
 variable "relay_cpu" {

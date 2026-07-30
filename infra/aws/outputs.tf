@@ -50,25 +50,33 @@ output "identity_secret_id" {
 
 output "next_steps" {
   description = "Commands to finish the deploy."
-  value       = <<-EOT
+
+  # Deliberately does NOT interpolate var.aws_profile. CD applies with
+  # aws_profile="" (it authenticates via OIDC), so embedding it made this output
+  # flip between "--profile alc-tf" and "--profile " on every alternating
+  # local/CD apply. That produced a permanent non-empty `terraform plan` — outputs
+  # only, no real infrastructure — which destroys the usefulness of "plan is
+  # clean" as a signal. Export AWS_PROFILE instead, which the S3 backend already
+  # requires.
+  value = <<-EOT
+
+    Run these with AWS_PROFILE exported (e.g. `export AWS_PROFILE=alc-tf`).
 
     1. Set the relay identity key (the service crash-loops until you do):
 
-         aws secretsmanager put-secret-value \
-           --profile ${var.aws_profile} --region ${var.aws_region} \
+         aws secretsmanager put-secret-value --region ${var.aws_region} \
            --secret-id "${aws_secretsmanager_secret.identity.name}" \
            --secret-string "$(openssl rand -hex 32)"
 
        Then force a new deployment so the task picks it up:
 
-         aws ecs update-service --force-new-deployment \
-           --profile ${var.aws_profile} --region ${var.aws_region} \
+         aws ecs update-service --force-new-deployment --region ${var.aws_region} \
            --cluster ${aws_ecs_cluster.main.name} --service relay
 
     2. Watch it come up:
 
          aws logs tail ${aws_cloudwatch_log_group.relay.name} --follow \
-           --profile ${var.aws_profile} --region ${var.aws_region}
+           --region ${var.aws_region}
 
     3. Verify:
 

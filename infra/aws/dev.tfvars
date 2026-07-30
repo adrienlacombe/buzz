@@ -23,10 +23,19 @@ domain_name     = "bitcoinmarkets.app"
 relay_subdomain = "relay" # -> relay.bitcoinmarkets.app
 
 # ── Relay ────────────────────────────────────────────────────────────────────
-# CI overrides this with ghcr.io/adrienlacombe/buzz:sha-<7> so the running task
-# definition records exactly which commit is deployed. The :main default is only
-# for a manual local apply.
-relay_image = "ghcr.io/adrienlacombe/buzz:main"
+# relay_image is deliberately ABSENT here, and has no default in variables.tf.
+#
+# CD owns it: deploy-aws.yml passes the commit's immutable
+# ghcr.io/adrienlacombe/buzz:sha-<7> tag. When this file pinned :main instead,
+# every local apply silently rewrote the image field and reverted whatever CD had
+# just deployed — a second writer to a field CD already owns.
+#
+# So a local apply must state which image it means. To keep what is deployed:
+#
+#   terraform apply -var-file=dev.tfvars -var relay_image="$(
+#     aws ecs describe-task-definition --task-definition buzz-dev-relay \
+#       --profile alc-tf --region eu-west-3 \
+#       --query 'taskDefinition.containerDefinitions[0].image' --output text)"
 
 relay_cpu           = 512  # 0.5 vCPU
 relay_memory        = 1024 # MiB
@@ -84,10 +93,6 @@ db_backup_retention_days = 7
 # ── Redis ────────────────────────────────────────────────────────────────────
 redis_engine_version = "7.1"
 redis_node_type      = "cache.t4g.micro"
-
-# ── CI/CD ────────────────────────────────────────────────────────────────────
-github_repository    = "adrienlacombe/buzz"
-github_deploy_branch = "main"
 
 # ── Lifecycle ────────────────────────────────────────────────────────────────
 # RDS, EFS and the media bucket additionally carry prevent_destroy in their
