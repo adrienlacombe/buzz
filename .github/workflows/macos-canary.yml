@@ -238,10 +238,15 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          NAME="Buzz_${VERSION}_aarch64-unsigned.dmg"
+          # Derived from tauri.conf.json productName rather than hardcoded, so a
+          # rename cannot silently publish the build under the old name. This
+          # said "Buzz_..." after productName became BitcoinMarkets.
+          PRODUCT=$(python3 -c 'import json;print(json.load(open("desktop/src-tauri/tauri.conf.json"))["productName"])')
+          NAME="${PRODUCT}_${VERSION}_aarch64-unsigned.dmg"
           cp "$DMG_PATH" "$RUNNER_TEMP/$NAME"
           echo "path=$RUNNER_TEMP/$NAME" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "app=${PRODUCT}.app" >> "$GITHUB_OUTPUT"
 
       - name: Upload unsigned canary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -254,6 +259,7 @@ jobs:
       - name: Usage notes
         env:
           NAME: ${{ steps.artifact.outputs.name }}
+          APP: ${{ steps.artifact.outputs.app }}
         run: |
           {
             echo "### Unsigned macOS canary"
@@ -262,10 +268,10 @@ jobs:
             echo
             echo 'This DMG is **not notarized**. Gatekeeper will refuse to open it.'
             echo 'To run it on your own machine, clear the quarantine attribute'
-            echo 'after copying Buzz.app to /Applications:'
+            printf 'after copying %s to /Applications:\n' "$APP"
             echo
             echo '```'
-            echo 'xattr -dr com.apple.quarantine /Applications/Buzz.app'
+            printf 'xattr -dr com.apple.quarantine /Applications/%s\n' "$APP"
             echo '```'
             echo
             echo 'Do not distribute this build. Notarization requires either'

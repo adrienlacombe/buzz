@@ -91,7 +91,10 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        resValue("string", "app_name", "Buzz")
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): display name only. The
+        // namespace/applicationId above is deliberately unchanged so existing
+        // installs keep upgrading.
+        resValue("string", "app_name", "BitcoinMarkets")
     }
 
     signingConfigs {
@@ -113,7 +116,7 @@ android {
                 applicationIdSuffix = worktreeIdSuffix
             }
             if (worktreeLabel != null) {
-                resValue("string", "app_name", "Buzz ($worktreeLabel)")
+                resValue("string", "app_name", "BitcoinMarkets ($worktreeLabel)")
             }
         }
         release {
