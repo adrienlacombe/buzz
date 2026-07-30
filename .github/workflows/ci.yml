@@ -1034,12 +1034,23 @@ jobs:
           touch "desktop/src-tauri/binaries/buzz-$TARGET"
       # Mesh rev is derived from Cargo.lock so a dependency bump needs no
       # lockstep edit here; the cache key tracks it automatically.
+      #
+      # FORK-LOCAL PATCH (adrienlacombe/buzz): read desktop/src-tauri/Cargo.lock,
+      # not the root one. Desktop is excluded from the root workspace, so the two
+      # locks pin mesh-llm independently — root is at tag=v0.73.1 (43103c5c) while
+      # desktop is at rev=f455d493. The build step below fetches the *desktop*
+      # manifest, so resolving the rev from the root lock makes it search for a
+      # checkout that was never fetched:
+      #   ::error::mesh-llm checkout for 43103c5 not found after cargo fetch
+      # Upstream never trips this because the step is skipped on a cache hit and
+      # their cache is warm; a fresh fork has no cache, so it runs and fails.
+      # Expect this hunk to conflict on upstream syncs that touch this block.
       - name: Resolve mesh-llm rev
         id: mesh_rev
         run: |
           set -euo pipefail
-          REV=$(python3 -c 'import tomllib; d=tomllib.load(open("Cargo.lock", "rb")); p=next(p for p in d["package"] if p["name"] == "mesh-llm-sdk"); print(p["source"].rsplit("#", 1)[1])')
-          [[ -n "$REV" ]] || { echo "::error::could not resolve mesh-llm rev from Cargo.lock"; exit 1; }
+          REV=$(python3 -c 'import tomllib; d=tomllib.load(open("desktop/src-tauri/Cargo.lock", "rb")); p=next(p for p in d["package"] if p["name"] == "mesh-llm-sdk"); print(p["source"].rsplit("#", 1)[1])')
+          [[ -n "$REV" ]] || { echo "::error::could not resolve mesh-llm rev from desktop/src-tauri/Cargo.lock"; exit 1; }
           echo "rev=$REV" >> "$GITHUB_OUTPUT"
           echo "short=${REV:0:7}" >> "$GITHUB_OUTPUT"
       - name: Restore mesh llama build cache
