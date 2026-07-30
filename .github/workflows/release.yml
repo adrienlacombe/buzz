@@ -1,14 +1,13 @@
 name: Release
 
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
 on:
   push:
     tags:
-      - 'v[0-9]*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Semver version matching the v-prefixed dispatch tag"
-        required: true
+      - 'desktop-v[0-9]*'
 
 jobs:
   # Shared setup: verify the immutable release tag, determine the version, and
@@ -25,23 +24,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       source_sha: ${{ steps.source.outputs.source_sha }}
     steps:
       - name: Determine version
         id: version
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          if [[ "$EVENT_NAME" == "push" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="$INPUT_VERSION"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        run: echo "version=${GITHUB_REF_NAME#desktop-v}" >> "$GITHUB_OUTPUT"
 
       - name: Validate version
         env:
@@ -62,41 +52,8 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          scripts/verify-release-ref.sh v "$VERSION"
+          scripts/verify-release-ref.sh desktop-v "$VERSION"
           echo "source_sha=$(git rev-parse 'HEAD^{commit}')" >> "$GITHUB_OUTPUT"
-
-      - name: Create versioned GitHub release
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RELEASE_SHA=$(git rev-parse HEAD)
-          NOTES=""
-          if [[ -f CHANGELOG.md ]]; then
-            NOTES=$(awk "/^## v${VERSION}\$/{found=1; next} found && /^## v/{exit} found && !/^\$/" CHANGELOG.md)
-          fi
-          if [[ -z "$NOTES" ]]; then
-            NOTES="Buzz Desktop v${VERSION}"
-          fi
-          PRERELEASE_FLAGS=()
-          if [[ "$VERSION" =~ -(test|alpha|beta|rc)([.-]|$) ]]; then
-            PRERELEASE_FLAGS=(--prerelease --latest=false)
-          fi
-          gh release create "v${VERSION}" \
-            --target "$RELEASE_SHA" \
-            --title "Buzz Desktop v${VERSION}" \
-            --notes "$NOTES" \
-            "${PRERELEASE_FLAGS[@]}"
-
-      - name: Create rolling auto-update release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create buzz-desktop-latest \
-            --prerelease \
-            --title "Buzz Desktop Auto-Update" \
-            --notes "Rolling release for the Tauri auto-updater. Do not download manually — use the versioned release instead." \
-            2>/dev/null || true
 
   release:
     name: Release
@@ -105,7 +62,7 @@ jobs:
     needs: setup
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
       id-token: write # required by block/apple-codesign-action for OIDC
     outputs:
       archive_name: ${{ steps.artifacts.outputs.archive_name }}
@@ -120,7 +77,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify tag-bound release source
-        run: scripts/verify-release-ref.sh v "$VERSION"
+        run: scripts/verify-release-ref.sh desktop-v "$VERSION"
 
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
 
@@ -278,13 +235,19 @@ jobs:
           fi
           echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
 
-          # Find the updater .tar.gz and .sig
+          # Find the updater .tar.gz and .sig. Give each architecture a unique
+          # release basename before artifacts are merged by the final writer.
           ARCHIVE=$(find "$BUNDLE_DIR/macos" -name '*.tar.gz' ! -name '*.sig' -type f | head -1)
           SIG="${ARCHIVE}.sig"
           if [[ -z "$ARCHIVE" || ! -f "$SIG" ]]; then
             echo "::error::Updater archive or signature not found in $BUNDLE_DIR/macos"
             exit 1
           fi
+          RENAMED="$(dirname "$ARCHIVE")/Buzz_${VERSION}_aarch64.app.tar.gz"
+          mv "$ARCHIVE" "$RENAMED"
+          mv "$SIG" "${RENAMED}.sig"
+          ARCHIVE="$RENAMED"
+          SIG="${RENAMED}.sig"
           echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
           echo "archive_name=$(basename "$ARCHIVE")" >> "$GITHUB_OUTPUT"
           echo "sig=$SIG" >> "$GITHUB_OUTPUT"
@@ -295,23 +258,15 @@ jobs:
         env:
           SIG_PATH: ${{ steps.artifacts.outputs.sig }}
 
-      - name: Upload arm64 DMG to versioned GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DMG_PATH: ${{ steps.artifacts.outputs.dmg }}
-        run: gh release upload "v${VERSION}" "$DMG_PATH" --clobber
-
-      - name: Upload updater archive to rolling release
-        if: github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
-        run: |
-          gh release upload buzz-desktop-latest \
-            "$ARCHIVE_PATH" \
-            "$SIG_PATH" \
-            --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCHIVE_PATH: ${{ steps.artifacts.outputs.archive }}
-          SIG_PATH: ${{ steps.artifacts.outputs.sig }}
+      - name: Stage Apple Silicon release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-release-macos-arm64
+          if-no-files-found: error
+          path: |
+            ${{ steps.artifacts.outputs.dmg }}
+            ${{ steps.artifacts.outputs.archive }}
+            ${{ steps.artifacts.outputs.sig }}
 
   release-macos-x64:
     name: Release macOS (Intel)
@@ -320,7 +275,7 @@ jobs:
     needs: setup
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
       id-token: write # required by block/apple-codesign-action for OIDC
     outputs:
       archive_name: ${{ steps.artifacts.outputs.archive_name }}
@@ -336,7 +291,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify tag-bound release source
-        run: scripts/verify-release-ref.sh v "$VERSION"
+        run: scripts/verify-release-ref.sh desktop-v "$VERSION"
 
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
 
@@ -449,6 +404,11 @@ jobs:
             echo "::error::Updater archive or signature not found in $BUNDLE_DIR/macos"
             exit 1
           fi
+          RENAMED="$(dirname "$ARCHIVE")/Buzz_${VERSION}_x64.app.tar.gz"
+          mv "$ARCHIVE" "$RENAMED"
+          mv "$SIG" "${RENAMED}.sig"
+          ARCHIVE="$RENAMED"
+          SIG="${RENAMED}.sig"
           echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
           echo "archive_name=$(basename "$ARCHIVE")" >> "$GITHUB_OUTPUT"
           echo "sig=$SIG" >> "$GITHUB_OUTPUT"
@@ -459,23 +419,15 @@ jobs:
         env:
           SIG_PATH: ${{ steps.artifacts.outputs.sig }}
 
-      - name: Upload Intel DMG to versioned GitHub release
-        run: gh release upload "v${VERSION}" "$DMG_PATH" --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DMG_PATH: ${{ steps.unsigned.outputs.dmg }}
-
-      - name: Upload updater archive to rolling release
-        if: github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
-        run: |
-          gh release upload buzz-desktop-latest \
-            "$ARCHIVE_PATH" \
-            "$SIG_PATH" \
-            --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCHIVE_PATH: ${{ steps.artifacts.outputs.archive }}
-          SIG_PATH: ${{ steps.artifacts.outputs.sig }}
+      - name: Stage Intel macOS release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-release-macos-x64
+          if-no-files-found: error
+          path: |
+            ${{ steps.unsigned.outputs.dmg }}
+            ${{ steps.artifacts.outputs.archive }}
+            ${{ steps.artifacts.outputs.sig }}
 
   # FORK-LOCAL PATCH (adrienlacombe/buzz): unsigned macOS release lane, new job.
   #
@@ -517,7 +469,9 @@ jobs:
     # warm mesh-llama cache, and a cold Metal llama build is the slow path here.
     timeout-minutes: 90
     permissions:
-      contents: write
+      # `read`, matching every other platform lane: since #3568 this job hands its
+      # artifacts to assemble-manifest and no longer touches a release itself.
+      contents: read
     outputs:
       archive_name: ${{ steps.artifacts.outputs.archive_name }}
       sig: ${{ steps.read-sig.outputs.sig }}
@@ -531,7 +485,11 @@ jobs:
           persist-credentials: false
 
       - name: Verify tag-bound release source
-        run: scripts/verify-release-ref.sh v "$VERSION"
+        # FORK-LOCAL PATCH (adrienlacombe/buzz): `desktop-v`, not `v`. Upstream
+        # renamed the release tag prefix in #3568 and updated all four of its own
+        # lanes; this lane is fork-local so the rename never reached it, and a
+        # stale `v` prefix fails here against a tag that is no longer created.
+        run: scripts/verify-release-ref.sh desktop-v "$VERSION"
 
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
 
@@ -668,30 +626,42 @@ jobs:
         env:
           SIG_PATH: ${{ steps.artifacts.outputs.sig }}
 
-      - name: Upload unsigned DMG to versioned GitHub release
+      # FORK-LOCAL PATCH (adrienlacombe/buzz): ported to upstream's staged-artifact
+      # handoff. This lane used to `gh release upload` twice — the DMG straight to
+      # the `v${VERSION}` release and the updater archive to `buzz-desktop-latest`.
+      # #3568 made the per-version release immutable and moved every platform lane
+      # to publishing a `desktop-release-*` workflow artifact that
+      # assemble-manifest downloads, flattens, verifies, and uploads exactly once.
+      # Left on the old model this lane would push to a `v${VERSION}` tag that is
+      # no longer created, and its archive would never land in `staged` — so the
+      # fork's only darwin-aarch64 asset would be absent from both the release and
+      # latest.json, which is the failure this whole lane exists to prevent.
+      - name: Rename DMG to carry -unsigned
+        id: unsigned-dmg
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DMG_PATH: ${{ steps.artifacts.outputs.dmg }}
         run: |
           set -euo pipefail
-          # Renamed to carry -unsigned, as macos-canary.yml does: the filename is
-          # the only warning a user gets before double-clicking it.
+          # The filename is the only warning a user gets before double-clicking it,
+          # so it carries -unsigned exactly as macos-canary.yml does.
           BASE=$(basename "$DMG_PATH" .dmg)
           STAGED="${RUNNER_TEMP}/${BASE}-unsigned.dmg"
           cp "$DMG_PATH" "$STAGED"
-          gh release upload "v${VERSION}" "$STAGED" --clobber
+          echo "dmg=$STAGED" >> "$GITHUB_OUTPUT"
 
-      - name: Upload updater archive to rolling release
-        if: github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
-        run: |
-          gh release upload buzz-desktop-latest \
-            "$ARCHIVE_PATH" \
-            "$SIG_PATH" \
-            --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCHIVE_PATH: ${{ steps.artifacts.outputs.archive }}
-          SIG_PATH: ${{ steps.artifacts.outputs.sig }}
+      - name: Stage Apple Silicon (unsigned) release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          # Matches assemble-manifest's `desktop-release-*` download pattern. A
+          # distinct suffix from the signed lane's desktop-release-macos-arm64 so
+          # the two never collide, though their `if:` conditions already make them
+          # mutually exclusive.
+          name: desktop-release-macos-arm64-unsigned
+          if-no-files-found: error
+          path: |
+            ${{ steps.unsigned-dmg.outputs.dmg }}
+            ${{ steps.artifacts.outputs.archive }}
+            ${{ steps.artifacts.outputs.sig }}
 
   release-linux:
     name: Release Linux
@@ -704,7 +674,7 @@ jobs:
     needs: setup
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
     env:
       # AppImage tools (linuxdeploy, appimagetool) are themselves AppImages.
       # Containers lack FUSE, so we must use the extract-and-run fallback.
@@ -779,7 +749,7 @@ jobs:
       - name: Verify tag-bound release source
         env:
           VERSION: ${{ needs.setup.outputs.version }}
-        run: scripts/verify-release-ref.sh v "$VERSION"
+        run: scripts/verify-release-ref.sh desktop-v "$VERSION"
 
       - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
 
@@ -913,29 +883,16 @@ jobs:
           SIG_PATH: ${{ steps.linux-artifacts.outputs.sig }}
 
       # NOTE: .deb is NOT auto-updatable (Tauri updater constraint — only AppImage supports it on Linux)
-      - name: Upload Linux artifacts to versioned GitHub release
-        env:
-          VERSION: ${{ needs.setup.outputs.version }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEB_PATH: ${{ steps.linux-artifacts.outputs.deb }}
-          APPIMAGE_PATH: ${{ steps.linux-artifacts.outputs.appimage }}
-        run: |
-          gh release upload "v$VERSION" \
-            "$DEB_PATH" \
-            "$APPIMAGE_PATH" \
-            --clobber
-
-      - name: Upload updater archive to rolling release
-        if: github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
-        run: |
-          gh release upload buzz-desktop-latest \
-            "$ARCHIVE_PATH" \
-            "$SIG_PATH" \
-            --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCHIVE_PATH: ${{ steps.linux-artifacts.outputs.archive }}
-          SIG_PATH: ${{ steps.linux-artifacts.outputs.sig }}
+      - name: Stage Linux release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-release-linux-x64
+          if-no-files-found: error
+          path: |
+            ${{ steps.linux-artifacts.outputs.deb }}
+            ${{ steps.linux-artifacts.outputs.appimage }}
+            ${{ steps.linux-artifacts.outputs.archive }}
+            ${{ steps.linux-artifacts.outputs.sig }}
 
   release-windows:
     name: Release Windows
@@ -943,7 +900,7 @@ jobs:
     needs: setup
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
     outputs:
       archive_name: ${{ steps.artifacts.outputs.archive_name }}
       sig: ${{ steps.read-sig.outputs.sig }}
@@ -959,7 +916,7 @@ jobs:
 
       - name: Verify tag-bound release source
         shell: bash
-        run: scripts/verify-release-ref.sh v "$VERSION"
+        run: scripts/verify-release-ref.sh desktop-v "$VERSION"
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
@@ -969,7 +926,7 @@ jobs:
         with:
           node-version: 24.14.1
           # Disable dependency caching: a writable cache in this release workflow
-          # (contents: write, feeds a signed installer) is a poisoning vector. pnpm
+          # (contents: read, feeds a signed installer) is a poisoning vector. pnpm
           # install runs uncached below.
           package-manager-cache: false
 
@@ -1051,33 +1008,40 @@ jobs:
         env:
           SIG_PATH: ${{ steps.artifacts.outputs.sig }}
 
-      - name: Upload Windows installer to versioned GitHub release
-        shell: bash
-        run: gh release upload "v${VERSION}" "$EXE_PATH" --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EXE_PATH: ${{ steps.artifacts.outputs.exe }}
-
-      - name: Upload updater archive to rolling release
-        if: github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
-        shell: bash
-        run: |
-          gh release upload buzz-desktop-latest \
-            "$ARCHIVE_PATH" \
-            "$SIG_PATH" \
-            --clobber
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARCHIVE_PATH: ${{ steps.artifacts.outputs.archive }}
-          SIG_PATH: ${{ steps.artifacts.outputs.sig }}
+      - name: Stage Windows release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-release-windows-x64
+          if-no-files-found: error
+          path: |
+            ${{ steps.artifacts.outputs.exe }}
+            ${{ steps.artifacts.outputs.sig }}
 
   assemble-manifest:
     name: Assemble multi-platform latest.json
     # Only the tag-bound setup path can reach this job.
+    #
+    # FORK-LOCAL PATCH (adrienlacombe/buzz): upstream requires `release` and
+    # `release-macos-x64` to report success. Both are pinned to
+    # `github.repository == 'block/buzz'`, so in a fork they always report
+    # `skipped` and upstream's gate can never be satisfied — the same failure
+    # 67917a9bf fixed, where every updater archive and .sig uploaded fine and only
+    # latest.json was missing. The daily sync reintroduced it silently: our side
+    # had *removed* a condition here while upstream *added* these, so git saw no
+    # conflict and took upstream's wholesale.
+    #
+    # Reachable here without weakening upstream: accept either darwin-aarch64 lane
+    # (their `if:` conditions are complementary, so exactly one ever runs), and
+    # accept `skipped` only for the signed x64 lane, which no fork can run. On
+    # block/buzz every lane still has to succeed.
     if: |
       always() &&
       needs.setup.result == 'success' &&
-      github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
+      (needs.release.result == 'success' || needs.release-macos-unsigned.result == 'success') &&
+      (needs.release-macos-x64.result == 'success' || needs.release-macos-x64.result == 'skipped') &&
+      needs.release-linux.result == 'success' &&
+      needs.release-windows.result == 'success' &&
+      github.ref == format('refs/tags/desktop-v{0}', needs.setup.outputs.version)
     runs-on: ubuntu-latest
     # FORK-LOCAL PATCH (adrienlacombe/buzz): release-macos-unsigned added. It is
     # the fork's darwin-aarch64 provider, mutually exclusive with `release`.
@@ -1096,7 +1060,26 @@ jobs:
           persist-credentials: false
 
       - name: Verify tag-bound release source
-        run: scripts/verify-release-ref.sh v "$VERSION"
+        run: scripts/verify-release-ref.sh desktop-v "$VERSION"
+
+      - name: Download staged release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: desktop-release-*
+          path: staged-by-platform
+
+      - name: Flatten staged artifacts without basename collisions
+        run: |
+          set -euo pipefail
+          mkdir staged
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            [[ ! -e "staged/$name" ]] || {
+              echo "::error::release artifact basename collision: $name"
+              exit 1
+            }
+            cp "$file" "staged/$name"
+          done < <(find staged-by-platform -type f -print0)
 
       - name: Write signature files
         env:
@@ -1142,7 +1125,7 @@ jobs:
           write_sig "$RESULT_LINUX" linux-x86_64 "$SIG_LINUX"
           write_sig "$RESULT_WIN" windows-x86_64 "$SIG_WIN"
 
-      - name: Verify archive URLs are accessible
+      - name: Verify draft release has every updater archive
         env:
           RESULT_ARM64: ${{ needs.release.result }}
           # FORK-LOCAL PATCH (adrienlacombe/buzz): the fork's darwin-aarch64.
@@ -1157,44 +1140,26 @@ jobs:
           ARCHIVE_WIN: ${{ needs.release-windows.outputs.archive_name }}
         run: |
           set -euo pipefail
-          # FORK-LOCAL PATCH (adrienlacombe/buzz): was hardcoded to block/buzz,
-          # so this verified the artifacts against Block's rolling release
-          # instead of the one Setup just created in this repo. GITHUB_REPOSITORY
-          # is correct upstream too — the release objects always live here.
-          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/buzz-desktop-latest"
-          ARCHIVES=()
-
-          add_archive() {
-            local result="$1" platform="$2" archive="$3"
-            if [[ "$result" == "success" ]]; then
-              [[ -n "$archive" ]] || { echo "::error::Missing archive name for successful platform: $platform"; exit 1; }
-              ARCHIVES+=("$archive")
-            fi
-          }
-
-          add_archive "$RESULT_ARM64" darwin-aarch64 "$ARCHIVE_ARM64"
-          add_archive "$RESULT_MAC_UNSIGNED" darwin-aarch64 "$ARCHIVE_MAC_UNSIGNED"
-          add_archive "$RESULT_X64" darwin-x86_64 "$ARCHIVE_X64"
-          add_archive "$RESULT_LINUX" linux-x86_64 "$ARCHIVE_LINUX"
-          add_archive "$RESULT_WIN" windows-x86_64 "$ARCHIVE_WIN"
-
-          for name in "${ARCHIVES[@]}"; do
-            echo "Checking $BASE/$name ..."
-            success=false
-            for attempt in 1 2 3; do
-              if curl -fsI "$BASE/$name" > /dev/null 2>&1; then
-                success=true
-                break
-              fi
-              echo "Attempt $attempt failed for $name, retrying in 10s..."
-              sleep 10
-            done
-            if [ "$success" != "true" ]; then
-              echo "::error::Archive not accessible after 3 attempts: $BASE/$name"
-              exit 1
+          assets=$(find staged -type f -exec basename {} \;)
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): RESULT_MAC_UNSIGNED added to the
+          # spec list. Upstream lists only its four lanes, so without this the
+          # fork's darwin-aarch64 archive is the one asset never checked against
+          # the staged set — the single platform whose absence this step exists to
+          # catch. The marker sits above the list because a `#` cannot appear
+          # inside a backslash-continued `for` list.
+          for spec in \
+            "$RESULT_ARM64:$ARCHIVE_ARM64" \
+            "$RESULT_MAC_UNSIGNED:$ARCHIVE_MAC_UNSIGNED" \
+            "$RESULT_X64:$ARCHIVE_X64" \
+            "$RESULT_LINUX:$ARCHIVE_LINUX" \
+            "$RESULT_WIN:$ARCHIVE_WIN"; do
+            result="${spec%%:*}"
+            archive="${spec#*:}"
+            if [[ "$result" == success ]]; then
+              [[ -n "$archive" ]] || { echo "::error::successful platform has no archive"; exit 1; }
+              grep -Fxq "$archive" <<<"$assets" || { echo "::error::draft release missing $archive"; exit 1; }
             fi
           done
-          echo "All archive URLs verified."
 
       - name: Generate unified latest.json
         env:
@@ -1211,11 +1176,14 @@ jobs:
           ARCHIVE_WIN: ${{ needs.release-windows.outputs.archive_name }}
         run: |
           set -euo pipefail
-          # FORK-LOCAL PATCH (adrienlacombe/buzz): was hardcoded to block/buzz,
-          # so this verified the artifacts against Block's rolling release
-          # instead of the one Setup just created in this repo. GITHUB_REPOSITORY
-          # is correct upstream too — the release objects always live here.
-          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/buzz-desktop-latest"
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): the owner was hardcoded to
+          # block/buzz, so a fork's latest.json pointed every download URL at
+          # Block's releases — clients would verify this fork's signature against
+          # Block's archive. GITHUB_REPOSITORY is correct upstream too, since the
+          # release objects always live in the repo running the workflow. The
+          # `desktop-v${VERSION}` path is upstream's (immutable per-version
+          # releases, #3568) and is kept as-is.
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/desktop-v${VERSION}"
           TRIPLES=()
 
           add_triple() {
@@ -1273,6 +1241,45 @@ jobs:
           bash desktop/scripts/generate-oss-latest-json.sh "$VERSION" "${TRIPLES[@]}" > latest.json
           cat latest.json
 
-      - name: Upload latest.json to rolling release
+      - name: Create or verify versioned draft
         run: |
-          gh release upload buzz-desktop-latest latest.json --clobber
+          set -euo pipefail
+          NOTES_FILE="${RUNNER_TEMP}/release-notes.md"
+          awk "/^## v${VERSION}\$/{found=1; next} found && /^## v/{exit} found" CHANGELOG.md > "$NOTES_FILE"
+          [[ -s "$NOTES_FILE" ]] || { echo "::error::missing non-empty changelog block for v${VERSION}"; exit 1; }
+          PRERELEASE_FLAGS=()
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE_FLAGS=(--prerelease --latest=false)
+          fi
+          if gh release view "desktop-v${VERSION}" >/dev/null 2>&1; then
+            EXISTING_SHA=$(gh release view "desktop-v${VERSION}" --json targetCommitish --jq .targetCommitish)
+            IS_DRAFT=$(gh release view "desktop-v${VERSION}" --json isDraft --jq .isDraft)
+            [[ "$EXISTING_SHA" == "${{ needs.setup.outputs.source_sha }}" ]] || {
+              echo "::error::existing release targets $EXISTING_SHA, not the immutable source"; exit 1;
+            }
+            if [[ "$IS_DRAFT" != true ]]; then
+              echo "already_published=true" >> "$GITHUB_ENV"
+            fi
+          else
+            gh release create "desktop-v${VERSION}" \
+              --draft \
+              --target "${{ needs.setup.outputs.source_sha }}" \
+              --title "Buzz Desktop v${VERSION}" \
+              --notes-file "$NOTES_FILE" \
+              "${PRERELEASE_FLAGS[@]}"
+          fi
+
+      - name: Upload complete artifact set to versioned draft
+        if: env.already_published != 'true'
+        run: |
+          mapfile -t files < <(find staged -type f -print)
+          [[ "${#files[@]}" -gt 0 ]] || { echo "::error::no staged release artifacts"; exit 1; }
+          gh release upload "desktop-v${VERSION}" "${files[@]}" --clobber
+
+      - name: Publish complete versioned release
+        if: env.already_published != 'true'
+        run: gh release edit "desktop-v${VERSION}" --draft=false
+
+      - name: Upload latest.json to rolling release last
+        if: ${{ env.already_published != 'true' && !contains(needs.setup.outputs.version, '-') }}
+        run: gh release upload buzz-desktop-latest latest.json --clobber
