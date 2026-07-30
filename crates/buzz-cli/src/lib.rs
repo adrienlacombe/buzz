@@ -801,6 +801,21 @@ pub enum WalletCmd {
         #[arg(long)]
         chain: String,
     },
+    /// Deploy your Nostr-controlled Starknet account
+    ///
+    /// The account pays its own deployment fee, so the derived address must be
+    /// funded first. Use `wallet address` to get it.
+    Deploy {
+        /// Declared class hash of the account contract
+        #[arg(long)]
+        class_hash: String,
+        /// Starknet JSON-RPC endpoint
+        #[arg(long)]
+        rpc: String,
+        /// Estimate instead of sending. Still requires the address to be funded.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Compute the class hash of a compiled Sierra artifact
     ///
     /// Read from the build output rather than hardcoded: the class hash changes

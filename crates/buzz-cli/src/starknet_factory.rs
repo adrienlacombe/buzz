@@ -142,7 +142,7 @@ mod tests {
     fn signature_is_four_felts() {
         // The account rejects any other length, so the factory must emit exactly
         // four — this is the contract between Rust and Cairo.
-        let key = secp256k1::SecretKey::from_byte_array([
+        let key = secp256k1::SecretKey::from_slice(&[
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 3,
         ])

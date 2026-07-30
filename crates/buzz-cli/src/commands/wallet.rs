@@ -217,6 +217,83 @@ pub fn cmd_address(pubkey: &str, class_hash: &str) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Deploy the caller's Nostr-controlled Starknet account.
+///
+/// A `DEPLOY_ACCOUNT` transaction is paid for by the account being deployed, so
+/// the derived address must already hold funds. That is the point of a
+/// counterfactual address: fund it, then it deploys itself.
+///
+/// `--dry-run` estimates instead of sending. Estimation still requires the address
+/// to be funded, because the protocol validates the fee against its balance.
+async fn cmd_deploy(
+    client: &BuzzClient,
+    class_hash: &str,
+    rpc_url: &str,
+    dry_run: bool,
+) -> Result<(), CliError> {
+    use starknet_accounts::AccountFactory;
+
+    let class_hash = starknet_core::types::Felt::from_hex(class_hash)
+        .map_err(|e| CliError::Usage(format!("invalid class hash: {e}")))?;
+    let pubkey = client.keys().public_key().to_hex();
+    let calldata = constructor_calldata(&pubkey).map_err(|e| CliError::Usage(e.to_string()))?;
+
+    let url =
+        url::Url::parse(rpc_url).map_err(|e| CliError::Usage(format!("invalid --rpc url: {e}")))?;
+    let provider = starknet_providers::JsonRpcClient::new(
+        starknet_providers::jsonrpc::HttpTransport::new(url),
+    );
+    // Read the chain id from the node rather than taking a flag: a mismatch would
+    // produce a signature valid for a different chain, which the sequencer
+    // rejects with nothing to point at the cause.
+    let chain_id = starknet_providers::Provider::chain_id(&provider)
+        .await
+        .map_err(|e| CliError::Other(format!("could not read chain id: {e}")))?;
+
+    // Deref: nostr::SecretKey wraps secp256k1::SecretKey.
+    let secret_key = **client.keys().secret_key();
+    let factory = crate::starknet_factory::NostrAccountFactory::new(
+        class_hash, calldata, chain_id, provider, secret_key,
+    );
+
+    let deployment = factory.deploy_v3(DEPLOY_SALT);
+    let address = deployment.address();
+    let derived = account_address_from_hex(&class_hash.to_fixed_hex_string(), &pubkey)
+        .map_err(|e| CliError::Usage(e.to_string()))?;
+
+    if dry_run {
+        let estimate = deployment
+            .estimate_fee()
+            .await
+            .map_err(|e| CliError::Other(format!("fee estimation failed: {e}")))?;
+        let output = serde_json::json!({
+            "dry_run": true,
+            "address": address.to_fixed_hex_string(),
+            "address_matches_local_derivation": address == derived,
+            "chain_id": chain_id.to_fixed_hex_string(),
+            "overall_fee": estimate.overall_fee.to_string(),
+            "l2_gas_consumed": estimate.l2_gas_consumed.to_string(),
+        });
+        println!("{}", serde_json::to_string(&output).unwrap_or_default());
+        return Ok(());
+    }
+
+    let sent = deployment
+        .send()
+        .await
+        .map_err(|e| CliError::Other(format!("deployment failed: {e}")))?;
+    let output = serde_json::json!({
+        "deployed": true,
+        "address": sent.contract_address.to_fixed_hex_string(),
+        "transaction_hash": sent.transaction_hash.to_fixed_hex_string(),
+        // The whole point of the exercise: does the sequencer land where we said?
+        "address_matches_local_derivation": sent.contract_address == derived,
+        "locally_derived": derived.to_fixed_hex_string(),
+    });
+    println!("{}", serde_json::to_string(&output).unwrap_or_default());
+    Ok(())
+}
+
 pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), CliError> {
     use crate::WalletCmd;
     match cmd {
@@ -259,6 +336,11 @@ pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), 
         }
         WalletCmd::Lookup { address, chain } => cmd_lookup(client, &address, &chain).await,
         WalletCmd::ClassHash { artifact } => cmd_class_hash(&artifact),
+        WalletCmd::Deploy {
+            class_hash,
+            rpc,
+            dry_run,
+        } => cmd_deploy(client, &class_hash, &rpc, dry_run).await,
         WalletCmd::Address { pubkey, class_hash } => {
             let pubkey = match pubkey {
                 Some(value) => value,

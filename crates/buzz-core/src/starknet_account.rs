@@ -129,9 +129,9 @@ fn split_be_32(bytes: &[u8]) -> (Felt, Felt) {
 pub fn sign_tx_hash(secret_key: &secp256k1::SecretKey, tx_hash: Felt) -> [Felt; 4] {
     let secp = secp256k1::Secp256k1::new();
     let keypair = secp256k1::Keypair::from_secret_key(&secp, secret_key);
-    let message = tx_hash_message(tx_hash);
+    let message = secp256k1::Message::from_digest(tx_hash_message(tx_hash));
     let signature = secp.sign_schnorr_no_aux_rand(&message, &keypair);
-    signature_felts(&signature.to_byte_array())
+    signature_felts(&signature.serialize())
 }
 
 /// Converts a 64-byte BIP-340 signature into the account's four felts.
@@ -263,7 +263,7 @@ mod tests {
     const VECTOR_0_S: &str = "25f66a4a85ea8b71e482a74f382d2ce5ebeee8fdb2172f477df4900d310536c0";
 
     fn vector_0_key() -> secp256k1::SecretKey {
-        secp256k1::SecretKey::from_byte_array(VECTOR_0_SECRET).expect("published vector key")
+        secp256k1::SecretKey::from_slice(&VECTOR_0_SECRET).expect("published vector key")
     }
 
     #[test]
@@ -286,9 +286,12 @@ mod tests {
         // vector specifies. Production signing takes the no-aux-rand path.
         let secp = secp256k1::Secp256k1::new();
         let keypair = secp256k1::Keypair::from_secret_key(&secp, &vector_0_key());
-        let signature =
-            secp.sign_schnorr_with_aux_rand(&tx_hash_message(Felt::ZERO), &keypair, &[0u8; 32]);
-        let bytes = signature.to_byte_array();
+        let signature = secp.sign_schnorr_with_aux_rand(
+            &secp256k1::Message::from_digest(tx_hash_message(Felt::ZERO)),
+            &keypair,
+            &[0u8; 32],
+        );
+        let bytes = signature.serialize();
         assert_eq!(hex::encode(&bytes[..32]), VECTOR_0_R);
         assert_eq!(hex::encode(&bytes[32..]), VECTOR_0_S);
     }
@@ -325,10 +328,14 @@ mod tests {
         raw[32..48].copy_from_slice(&felts[3].to_bytes_be()[16..]);
         raw[48..].copy_from_slice(&felts[2].to_bytes_be()[16..]);
 
-        let signature = secp256k1::schnorr::Signature::from_byte_array(raw);
+        let signature = secp256k1::schnorr::Signature::from_slice(&raw).expect("64-byte sig");
         let (xonly, _) = keypair.x_only_public_key();
-        secp.verify_schnorr(&signature, &tx_hash_message(tx_hash), &xonly)
-            .expect("our own signature must verify");
+        secp.verify_schnorr(
+            &signature,
+            &secp256k1::Message::from_digest(tx_hash_message(tx_hash)),
+            &xonly,
+        )
+        .expect("our own signature must verify");
     }
 
     #[test]
