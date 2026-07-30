@@ -103,6 +103,15 @@ misconfiguration.
   failing. Use `macos-canary.yml` for an unsigned build; notarization needs
   either Block's #mdx-ios provisioning or a paid Apple Developer ID wired in
   directly.
+- **`release.yml`'s `assemble-manifest` job** — downstream of the above. It
+  asserts `too few platforms` below three, refusing to publish a `latest.json`
+  that would break macOS auto-update for its consumers. With both macOS jobs
+  skipped a fork can only ever supply two, so **this job is permanently red
+  here** and a `v*` tag run will never be fully green. `Setup`, `Release Linux`,
+  and `Release Windows` all pass and attach real signed artifacts; only the
+  manifest assembly fails. Do not "fix" it by lowering the threshold — that
+  publishes an incomplete manifest as though it were complete, which is exactly
+  what the assertion prevents.
 - **Mobile release** — `mobile-release-candidate.yml` is dispatch-only, wants an
   exact `block/buzz` main SHA, and hands off to the private
   `squareup/sprout-releases` Buildkite pipeline.
