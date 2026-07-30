@@ -48,6 +48,13 @@ safe-outputs:
     # of headroom at the rate measured above, so about two weeks of drift. If the
     # sync is ever down longer than that it will fail on size with no knob left,
     # and the merge has to be done by hand.
+    # Requests GitHub Copilot's code review on the sync PR. This is the only
+    # AI reviewer GitHub exposes as a requestable reviewer identity — there is no
+    # "Opus" reviewer to request. gh-aw's own engine currently runs on
+    # claude-sonnet-4.6, and pinning engine.model changes who *writes* the merge,
+    # not who reviews it; gh-aw passes that string through unvalidated, so a wrong
+    # value fails the run at inference time.
+    reviewers: [copilot]
     max-patch-files: 2000
     max-patch-size: 10240
   create-issue:

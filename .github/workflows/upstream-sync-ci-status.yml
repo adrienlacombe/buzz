@@ -1,0 +1,122 @@
+# FORK-LOCAL WORKFLOW (adrienlacombe/buzz) — not present upstream.
+#
+# Tells you at a glance whether an [upstream-sync] PR is safe to merge, by
+# labelling it sync-ci-green or sync-ci-red once its checks settle and posting a
+# one-line summary of anything that failed.
+#
+# It deliberately does NOT merge. The sync PR is the review gate for changes this
+# fork did not author (see AGENTS.md), and the sync agent writes a "Needs a human
+# look" section specifically to be read — auto-merging would skip it. Compounding
+# that, deploy-aws.yml deploys every push to main, so an auto-merged sync would
+# reach the live relay unreviewed.
+#
+# Why a watcher rather than GitHub's native auto-merge: native auto-merge needs
+# required status checks to have anything to wait for, which means branch
+# protection on main. This fork commits directly to main by policy, and protecting
+# it would break that. A watcher needs no protection and leaves direct pushes
+# alone.
+
+name: Upstream sync CI status
+
+on:
+  # Fires when any workflow completes. The job filters to sync PRs, so unrelated
+  # completions cost one cheap API call and exit.
+  workflow_run:
+    workflows: ["CI", "Docker image", "helm chart", "Sprig"]
+    types: [completed]
+  # Re-check on demand, e.g. after re-running a flaky job.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write # labels + comment
+  checks: read
+  statuses: read
+
+concurrency:
+  # One evaluation at a time; a later completion supersedes an in-flight check.
+  group: upstream-sync-ci-status
+  cancel-in-progress: true
+
+jobs:
+  report:
+    if: github.repository == 'adrienlacombe/buzz'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Evaluate open upstream-sync PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          prs=$(gh pr list --repo "$REPO" --state open --label upstream-sync \
+                  --json number --jq '.[].number')
+          if [ -z "$prs" ]; then
+            echo "No open [upstream-sync] PRs — nothing to report."
+            exit 0
+          fi
+
+          for pr in $prs; do
+            echo "::group::PR #$pr"
+
+            # statusCheckRollup covers both check-runs and legacy commit statuses.
+            roll=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup)
+
+            # Normalise: check-runs use .conclusion/.status, statuses use .state.
+            counts=$(printf '%s' "$roll" | jq -r '
+              [ .statusCheckRollup[]
+                | { name: (.name // .context // "check"),
+                    verdict: (
+                      if .status == "COMPLETED" or .status == null
+                      then (.conclusion // .state // "UNKNOWN")
+                      else "PENDING" end) } ] as $c
+              | { total:   ($c | length),
+                  pending: ($c | map(select(.verdict == "PENDING")) | length),
+                  failed:  ($c | map(select(.verdict | test("FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE";"i"))) | length),
+                  failing: ($c | map(select(.verdict | test("FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE";"i"))) | map(.name) | join(", ")) }')
+
+            total=$(printf '%s' "$counts"  | jq -r .total)
+            pending=$(printf '%s' "$counts"| jq -r .pending)
+            failed=$(printf '%s' "$counts" | jq -r .failed)
+            failing=$(printf '%s' "$counts"| jq -r .failing)
+            echo "total=$total pending=$pending failed=$failed"
+
+            if [ "$total" = "0" ]; then
+              echo "No checks reported yet — leaving labels alone."
+              echo "::endgroup::"; continue
+            fi
+            if [ "$pending" != "0" ]; then
+              echo "$pending check(s) still running — will re-evaluate on the next completion."
+              echo "::endgroup::"; continue
+            fi
+
+            # Labels are mutually exclusive; clear the other one each time so a
+            # re-run that flips the verdict does not leave both attached.
+            # Built with printf on indented lines: a bash string whose
+            # continuation lines start at column 0 would escape this `run: |`
+            # block scalar and make the workflow unparseable.
+            if [ "$failed" = "0" ]; then
+              gh pr edit "$pr" --repo "$REPO" --add-label sync-ci-green --remove-label sync-ci-red 2>/dev/null || true
+              body=$(printf '%s\n\n%s' \
+                "✅ **CI is green** — all ${total} checks passed. Safe to review and merge." \
+                "Merge with a **merge commit**, not squash — the sync relies on upstream's individual commits staying in history so the next run can tell what is already merged (see \`.github/workflows/upstream-sync.md\`).")
+            else
+              gh pr edit "$pr" --repo "$REPO" --add-label sync-ci-red --remove-label sync-ci-green 2>/dev/null || true
+              body=$(printf '%s\n\n%s' \
+                "❌ **CI is not green** — ${failed} of ${total} checks failed: ${failing}" \
+                "Do not merge until these are resolved or understood. Some may be pre-existing failures unrelated to the sync — compare against \`main\`.")
+            fi
+
+            # One comment per verdict change, not per run: skip if the newest bot
+            # comment already says the same thing.
+            last=$(gh pr view "$pr" --repo "$REPO" --json comments \
+                     --jq '[.comments[] | select(.author.login=="github-actions")] | last | .body // ""')
+            if [ "$last" = "$body" ]; then
+              echo "Verdict unchanged — not re-commenting."
+            else
+              printf '%s' "$body" | gh pr comment "$pr" --repo "$REPO" --body-file -
+            fi
+            echo "::endgroup::"
+          done
