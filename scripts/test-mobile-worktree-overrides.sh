@@ -18,6 +18,19 @@ clean_script="$repo_root/scripts/mobile-worktree-clean.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# FORK-LOCAL PATCH (adrienlacombe/buzz): the production display name is read from
+# the generator rather than hardcoded, so a rebrand cannot fail this contract for
+# the wrong reason. The assertions below check the *contract* — release keeps the
+# unlabelled name, debug appends a branch label, and the two platforms agree —
+# which is what this test is for. They previously matched the literal "Buzz" and
+# broke when the app was renamed to BitcoinMarkets.
+# Defined here, before first use, because `set -u` aborts on an unset variable.
+app_name=$(sed -n 's/^APP_DISPLAY_NAME = \(.*\) (\${label})$/\1/p' "$script" | head -1)
+if [[ -z "$app_name" ]]; then
+  printf 'FAIL: could not read APP_DISPLAY_NAME from %s\n' "$script" >&2
+  exit 1
+fi
+
 failures=0
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -66,7 +79,7 @@ android="$wt/mobile/android/worktree.properties"
 grep -q '^BUNDLE_IDENTIFIER = com\.buzz\.buzzMobile\.feature-work-1$' "$ios" \
   && pass "iOS bundle identifier keys to the sanitized worktree directory name" \
   || fail "iOS bundle identifier must key to the worktree dir, got: $(cat "$ios")"
-grep -q '^APP_DISPLAY_NAME = Buzz (Fix_Thing-2)$' "$ios" \
+grep -q "^APP_DISPLAY_NAME = ${app_name} (Fix_Thing-2)$" "$ios" \
   && pass "iOS display name carries the branch label" \
   || fail "iOS display name wrong: $(cat "$ios")"
 grep -q '^label=Fix_Thing-2$' "$android" \
@@ -96,7 +109,7 @@ git -C "$wt" checkout -q -b "it's-\$a\"branch"
 grep -q "^label=it-s-a-branch$" "$android" \
   && pass "apostrophes and shell metacharacters are sanitized out of the label" \
   || fail "label must sanitize special chars, got: $(cat "$android")"
-grep -Eq "^APP_DISPLAY_NAME = Buzz \([A-Za-z0-9._-]+\)$" "$ios" \
+grep -Eq "^APP_DISPLAY_NAME = ${app_name} \([A-Za-z0-9._-]+\)$" "$ios" \
   && pass "iOS display name only contains resource-safe characters" \
   || fail "iOS display name has unsafe characters: $(cat "$ios")"
 
@@ -126,6 +139,10 @@ gradle="$repo_root/mobile/android/app/build.gradle.kts"
 manifest="$repo_root/mobile/android/app/src/main/AndroidManifest.xml"
 plist="$repo_root/mobile/ios/Runner/Info.plist"
 
+[[ "$app_name" != *'('* ]] \
+  && pass "production display name is unlabelled: $app_name" \
+  || fail "production display name must be unlabelled, got: $app_name"
+
 grep -q 'WorktreeOverrides.xcconfig' "$debug_xcconfig" \
   && pass "Debug.xcconfig includes WorktreeOverrides" \
   || fail "Debug.xcconfig must include WorktreeOverrides.xcconfig"
@@ -142,18 +159,18 @@ grep -q 'WorktreeOverrides' "$release_xcconfig" \
 grep -q '^BUNDLE_IDENTIFIER = com\.buzz\.buzzMobile$' "$release_xcconfig" \
   && pass "Release.xcconfig keeps the production bundle identifier" \
   || fail "Release.xcconfig must keep BUNDLE_IDENTIFIER = com.buzz.buzzMobile"
-grep -q '^APP_DISPLAY_NAME = Buzz$' "$release_xcconfig" \
+grep -q "^APP_DISPLAY_NAME = ${app_name}$" "$release_xcconfig" \
   && pass "Release.xcconfig keeps the production display name" \
-  || fail "Release.xcconfig must keep APP_DISPLAY_NAME = Buzz"
+  || fail "Release.xcconfig must keep APP_DISPLAY_NAME = ${app_name}"
 grep -q '<string>$(APP_DISPLAY_NAME)</string>' "$plist" \
   && pass "Info.plist display name resolves from build settings" \
   || fail "Info.plist CFBundleDisplayName must be \$(APP_DISPLAY_NAME)"
 grep -q 'android:label="@string/app_name"' "$manifest" \
   && pass "Android manifest label resolves from resources" \
   || fail "Android manifest label must be @string/app_name"
-grep -q 'resValue("string", "app_name", "Buzz")' "$gradle" \
-  && pass "Gradle default app_name stays Buzz" \
-  || fail "Gradle must declare the default app_name resValue"
+grep -q "resValue(\"string\", \"app_name\", \"${app_name}\")" "$gradle" \
+  && pass "Gradle default app_name matches the iOS production name" \
+  || fail "Gradle default app_name must be \"${app_name}\" to match iOS"
 grep -q 'worktreeLabel.matches' "$gradle" \
   && pass "Gradle validates the worktree label before use" \
   || fail "Gradle must validate the worktree label against a safe pattern"
