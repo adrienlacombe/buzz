@@ -93,7 +93,7 @@ place.
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | Root lock pins `tag=v0.73.1` (`43103c5c`), desktop pins `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit |
 | `docker.yml` | `PUSH_GATEWAY_IMAGE` override; owner-correct attestation hint | Push-gateway image was hardcoded to `ghcr.io/block/buzz-push-gateway` in nine places, so `GHCR_IMAGE` could not retarget it |
-| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository` | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates |
+| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published — see [Desktop auto-update](#desktop-auto-update-linux--windows--works) |
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
 | `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
@@ -196,18 +196,30 @@ misconfiguration.
   failing. Use `macos-canary.yml` for an unsigned build; notarization needs
   either Block's #mdx-ios provisioning or a paid Apple Developer ID wired in
   directly.
-- **`release.yml`'s `assemble-manifest` job** — downstream of the above. It
-  asserts `too few platforms` below three, refusing to publish a `latest.json`
-  that would break macOS auto-update for its consumers. With both macOS jobs
-  skipped a fork can only ever supply two, so **this job is permanently red
-  here** and a `v*` tag run will never be fully green. `Setup`, `Release Linux`,
-  and `Release Windows` all pass and attach real signed artifacts; only the
-  manifest assembly fails. Do not "fix" it by lowering the threshold — that
-  publishes an incomplete manifest as though it were complete, which is exactly
-  what the assertion prevents.
+- **macOS auto-update** — follows from the above rather than from the updater.
+  There is no signed macOS build to serve, and `macos-canary.yml` passes no
+  `BUZZ_UPDATER_*`, so `build.rs` leaves `buzz_updater_enabled` unset and
+  `lib.rs:339` never registers `tauri_plugin_updater` at all. An unsigned canary
+  cannot self-update because the plugin is not compiled into it.
 - **Mobile release** — `mobile-release-candidate.yml` is dispatch-only, wants an
   exact `block/buzz` main SHA, and hands off to the private
   `squareup/sprout-releases` Buildkite pipeline.
+
+### Desktop auto-update (Linux + Windows) — works
+
+Previously listed here as permanently broken. It is not: `assemble-manifest`
+asserted `-ge 3` platforms, which a fork cannot reach with both macOS jobs
+skipped, so `latest.json` was never published — while every updater archive and
+`.sig` was already sitting in the `buzz-desktop-latest` rolling release. One
+missing file, not a missing feature. The guard now asserts on job results
+instead (see the `release.yml` row above), and `.deb` remains non-updatable by
+Tauri constraint (`release.yml:699`), so Linux auto-update is AppImage only.
+
+The rest was already fork-correct: `BUZZ_UPDATER_ENDPOINT` points at this repo's
+rolling release, the fork's own throwaway signing keypair produces the `.sig`
+files, `desktop/scripts/generate-oss-latest-json.sh` hardcodes no platform, and
+the app checks on mount and every 6 h
+(`use-updater.ts:23`, `BACKGROUND_UPDATE_CHECK_INTERVAL_MS`).
 
 Known-still-hardcoded upstream, not yet patched here: `helm-chart.yml` has a
 `GHCR_CHART_REPO` override but `push-gateway-helm-chart.yml` hardcodes

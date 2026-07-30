@@ -989,7 +989,43 @@ jobs:
           add_triple "$RESULT_LINUX" linux-x86_64 "$ARCHIVE_LINUX"
           add_triple "$RESULT_WIN" windows-x86_64 "$ARCHIVE_WIN"
 
-          [ "${#TRIPLES[@]}" -ge 3 ] || { echo "::error::too few platforms (${#TRIPLES[@]})"; exit 1; }
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): was a bare `-ge 3`, which this
+          # fork can never satisfy. Both macOS jobs stay pinned to block/buzz
+          # because Block's internal codesigning service is unreachable here, so
+          # they skip and only linux + windows remain. latest.json was therefore
+          # never published and auto-update was dead on this fork — even though
+          # every updater archive and .sig was already uploaded to the rolling
+          # release. One missing file, not a missing feature.
+          #
+          # This is not the lowered threshold that would publish an incomplete
+          # manifest as a complete one. The count was a proxy for "no platform is
+          # missing"; a proxy that could not tell a job that skipped from a job
+          # that broke. Asserting directly on the job results says what was meant,
+          # and is *stricter* here than the count it replaces: `-ge 3` passed with
+          # one macOS platform failed (3 of 4 succeeded), which silently stranded
+          # that platform's installs. Now any attempted platform that did not
+          # succeed fails the manifest.
+          for entry in \
+            "darwin-aarch64:$RESULT_ARM64" \
+            "darwin-x86_64:$RESULT_X64" \
+            "linux-x86_64:$RESULT_LINUX" \
+            "windows-x86_64:$RESULT_WIN"
+          do
+            platform="${entry%%:*}"
+            result="${entry#*:}"
+            case "$result" in
+              # skipped == structurally not built for this repo (the macOS jobs on
+              # a fork). Anything else — failure, cancelled — means it was
+              # attempted and did not deliver, so publishing would strand it.
+              success | skipped) ;;
+              *) echo "::error::$platform was attempted and did not succeed: $result"; exit 1 ;;
+            esac
+          done
+
+          # Floor, not the correctness check: catches a config error that skips
+          # every platform at once, which the loop above would otherwise pass.
+          [ "${#TRIPLES[@]}" -ge 1 ] || { echo "::error::no platforms produced an updater archive"; exit 1; }
+          echo "Publishing a manifest for ${#TRIPLES[@]} platform(s)."
           bash desktop/scripts/generate-oss-latest-json.sh "$VERSION" "${TRIPLES[@]}" > latest.json
           cat latest.json
 
