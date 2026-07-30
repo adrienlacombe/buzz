@@ -1,0 +1,207 @@
+# FORK-LOCAL WORKFLOW (adrienlacombe/buzz) — not present upstream.
+#
+# Merges upstream/main into a branch and opens the sync PR, using plain git and
+# no AI at all. Runs 30 minutes before the agentic sync
+# (`.github/workflows/upstream-sync.md`, 02:00 UTC), which now only has to handle
+# the cases this cannot: real conflicts.
+#
+# ## Why this exists
+#
+# The agentic sync ran `git merge` correctly and kept the merge commit, exactly as
+# its prompt says to. It still produced a single-parent commit on every run,
+# because gh-aw's `create-pull-request` safe output moves the agent's work into a
+# separate job as a git patch (`/tmp/gh-aw/aw-*.patch`, upstream-sync.lock.yml).
+# A patch carries file deltas; it cannot carry a merge commit's second parent.
+#
+# The consequence was invisible in the diff and obvious in the graph: PR #7 landed
+# all 17 commits' *content*, the merge base stayed at 63496cc1d, and GitHub kept
+# reporting the fork 23 commits behind. Every night's run then re-merged from the
+# same stale base and re-resolved the same conflicts from scratch. Repaired by hand
+# in 3ce7c8adc.
+#
+# Nothing about that was a reasoning failure, so a better model does not fix it.
+# What matters is who pushes. Here the runner pushes, so the merge commit that
+# lands is the merge commit git made — two parents, merge base advances, and the
+# next run only sees what is genuinely new.
+#
+# ## Division of labour with the agentic sync
+#
+# A clean `git merge` needs no judgement, and this is the ~90% case: it runs on
+# GitHub's free tier for a public repo and costs no AI credits. The agentic run
+# earns its cost only on conflicts — resolving them, and writing the "Needs a
+# human look" notes that a mechanical merge cannot produce.
+#
+# Worth knowing what neither half catches: a merge can be clean and still be
+# wrong. Upstream #3568 restructured the release workflow, git auto-merged it with
+# no conflict, and it silently made `assemble-manifest`'s gate unreachable in a
+# fork and stranded `release-macos-unsigned` on the old release model. See
+# 3ce7c8adc. Read a green sync PR's release.yml diff anyway.
+#
+# ## Deliberately does not merge to main
+#
+# Same reasoning as upstream-sync-ci-status.yml: the PR is the review gate for
+# changes this fork did not author, and deploy-aws.yml deploys every push to main
+# to the live relay, so an unreviewed auto-merge would reach production.
+
+name: Upstream sync (merge)
+
+on:
+  schedule:
+    # 01:30 UTC, 30 minutes ahead of the agentic sync at 02:00.
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: upstream-sync-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge upstream into a sync branch
+    # Fork-local by nature: block/buzz has nothing to sync from.
+    if: github.repository == 'adrienlacombe/buzz'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the sync branch (never main)
+      pull-requests: write # open the sync PR
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: main
+          # Full history: a shallow clone cannot compute a merge base, which is
+          # the one thing this workflow exists to advance.
+          fetch-depth: 0
+          # GITHUB_TOKEN by default. A branch pushed with it does not start new
+          # workflow runs, so CI may not fire on the PR — set SYNC_PUSH_TOKEN to a
+          # PAT to fix that. Kept as an optional secret rather than a hardcoded
+          # one so opting in stays a settings change, not a file edit.
+          token: ${{ secrets.SYNC_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Stop if a sync PR is already awaiting review
+        id: pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Without this, the branch this run would push stacks a second PR on top
+          # of yesterday's unreviewed one, and the two then conflict with each
+          # other rather than with upstream.
+          open=$(gh pr list --repo "$REPO" --state open --label upstream-sync \
+                   --json number --jq '[.[].number] | join(" ")')
+          if [ -n "$open" ]; then
+            echo "Open [upstream-sync] PR(s) already awaiting review: #${open// / #}"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch upstream
+        if: steps.pending.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/block/buzz.git
+          git fetch --no-tags upstream main
+
+      - name: Exit early if not behind
+        if: steps.pending.outputs.skip == 'false'
+        id: behind
+        run: |
+          set -euo pipefail
+          # Counts commits, not file differences: the fork is permanently ahead by
+          # its own patches, so only reachability answers "is there anything to
+          # merge". This is exactly the number GitHub renders as "N commits
+          # behind", and it going to 0 is the whole point.
+          count=$(git rev-list --count upstream/main ^HEAD)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" = "0" ]; then
+            echo "Already up to date with upstream/main — nothing to do."
+          else
+            echo "Behind upstream/main by $count commit(s)."
+          fi
+
+      - name: Merge upstream
+        if: steps.pending.outputs.skip == 'false' && steps.behind.outputs.count != '0'
+        id: merge
+        run: |
+          set -euo pipefail
+
+          SHORT=$(git rev-parse --short upstream/main)
+          BRANCH="upstream-sync-$(date -u +%Y-%m-%d)-${SHORT}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git switch -c "$BRANCH"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # --no-ff so the merge commit always exists. A fast-forward would be
+          # correct git but would leave nothing for the PR to review, and this fork
+          # is never actually able to fast-forward anyway.
+          #
+          # -s is deliberately absent: `-s ours` or `-X ours` would silence
+          # conflicts by discarding upstream's side, producing a merge that claims
+          # to include commits whose content it dropped. Conflicts must surface.
+          if git merge --no-ff --no-edit upstream/main; then
+            echo "conflicted=false" >> "$GITHUB_OUTPUT"
+          else
+            # Leave no half-merged state behind, and say nothing more: the agentic
+            # run at 02:00 re-does this merge and resolves it. Exit 0 so a
+            # conflicted day is a handoff, not a red workflow badge.
+            git merge --abort
+            echo "conflicted=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Merge conflicts — handing off to the agentic sync at 02:00 UTC."
+          fi
+
+      - name: Push branch and open PR
+        if: steps.merge.outputs.conflicted == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+          COUNT: ${{ steps.behind.outputs.count }}
+        run: |
+          set -euo pipefail
+
+          # The single-quoted printf strings below hold markdown backticks, not
+          # command substitution, so single quotes are correct — the text must
+          # reach the PR body verbatim. shellcheck flags them as SC2016 (info);
+          # that is a false positive and actionlint is not part of this repo's CI.
+          UPSTREAM_TIP=$(git rev-parse --short upstream/main)
+
+          BODY_FILE="$(mktemp)"
+          {
+            printf '## Upstream sync: %s commits from `block/buzz`\n\n' "$COUNT"
+            printf 'A plain `git merge --no-ff upstream/main`, merged and pushed by the\n'
+            printf 'runner so the merge commit keeps **both parents**. Merging this advances\n'
+            printf 'the merge base to `%s`, which is what takes the\n' "$UPSTREAM_TIP"
+            printf '"N commits behind" counter to zero.\n\n'
+            printf 'No AI was involved: git reported no conflicts, so there was nothing to\n'
+            printf 'resolve and no resolution to review. If it *had* conflicted, this workflow\n'
+            printf 'would have aborted and left it to the agentic sync instead.\n\n'
+            printf '### Commits\n\n'
+            # HEAD^1 is our main, HEAD^2 is upstream/main, so this range is exactly
+            # the commits being merged. Merges are not filtered out, so the list
+            # length matches the count in the heading.
+            git log --reverse --pretty='- `%h` %s' 'HEAD^1..HEAD^2'
+            printf '\n### Review notes\n\n'
+            printf -- '- **Merge with a merge commit, not squash.** A squash drops the second\n'
+            printf '  parent and puts this fork straight back into the state 3ce7c8adc had to\n'
+            printf '  repair by hand.\n'
+            printf -- '- **A clean merge is not a correct merge.** Check the diff for the\n'
+            printf '  fork-local patch sites in `CLAUDE.md`, especially `release.yml`: upstream\n'
+            printf '  #3568 auto-merged without conflict and still broke two of them.\n'
+            printf -- '- `upstream-sync-ci-status.yml` will label this `sync-ci-green` or\n'
+            printf '  `sync-ci-red` once checks settle. If no checks ever appear, the branch\n'
+            printf '  was pushed with `GITHUB_TOKEN`; set `SYNC_PUSH_TOKEN` to a PAT.\n'
+          } > "$BODY_FILE"
+
+          git push origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "[upstream-sync] Merge $COUNT commits from block/buzz (up to $UPSTREAM_TIP)" \
+            --body-file "$BODY_FILE" \
+            --label upstream-sync \
+            --label automation

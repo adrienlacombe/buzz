@@ -78,17 +78,24 @@ Your job is to bring this fork's `main` branch up to date with upstream `main`,
 resolving merge conflicts if there are any, and to propose the result as a pull
 request. You never push to `main` yourself.
 
+You run **second**. `upstream-sync-merge.yml` runs at 01:30 UTC and does the
+merge with plain git, no AI, whenever it comes out clean — which is most days.
+It hands over to you only when git reports conflicts, so **conflict resolution
+is your job and a clean merge is not.** If you find yourself with nothing to
+resolve, that is the signal to stop, not to open a second pull request.
+
 ## 1. Fetch upstream
 
 ```
 git remote add upstream https://github.com/block/buzz.git
 git fetch --unshallow origin
 git fetch upstream main
+git fetch origin 'refs/heads/upstream-sync-*:refs/remotes/origin/upstream-sync-*'
 ```
 
 The first command fails harmlessly if the remote already exists; the second
 fails harmlessly if the checkout is already complete. Ignore both errors and
-carry on.
+carry on. The fourth fetches any sync branch already pushed, which step 2 needs.
 
 ## 2. Decide whether there is anything to do
 
@@ -103,6 +110,20 @@ If the left number is **0**, the fork is already current. Say so and stop —
 do not create a pull request, and do not create an issue. This is the expected
 outcome on most days.
 
+Then check whether the 01:30 run already merged this:
+
+```
+git branch -r --list 'origin/upstream-sync-*' --contains upstream/main
+```
+
+If that prints **any** branch, a sync containing upstream's current tip is
+already pushed and waiting for review. Stop — say which branch you found and
+create nothing. The fork still *looks* behind at this point, because the merge
+lives on that branch and has not landed on `main` yet; that is expected and is
+not a reason to redo the work. Opening a second pull request here would stack
+two unreviewed merges that then conflict with each other rather than with
+upstream.
+
 ## 3. Merge upstream
 
 ```
@@ -112,6 +133,15 @@ git merge upstream/main
 Keep the merge commit — do **not** squash and do **not** rebase, so that
 upstream's individual commits stay in the history and the next run can tell
 what is already merged.
+
+Be aware of a limitation you cannot work around from here: your commits reach
+the pull request as a git *patch*, so the second parent of the merge commit you
+just made is dropped, and the pull request will show your merge as a single
+ordinary commit. That is why `upstream-sync-merge.yml` exists and handles the
+clean case. Merge anyway — the resolved content is what is wanted from you — but
+do not claim in the pull request body that upstream history is preserved, and
+say plainly that the merge base will not advance until someone re-merges
+upstream by hand afterwards.
 
 If the merge completes cleanly, go to step 5.
 

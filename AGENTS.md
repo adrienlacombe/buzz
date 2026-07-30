@@ -61,24 +61,52 @@ When a file edit is genuinely unavoidable:
 
 ### How the sync works
 
-`.github/workflows/upstream-sync.md` (compiled to `.lock.yml`) runs Copilot on a
-daily schedule. It fetches `block/buzz`, exits early if this fork is not behind,
-and otherwise performs a real `git merge` — merge commit preserved, never
-squashed — so upstream history stays intact and the next run can tell what is
-already merged.
+The sync runs in **two stages**, and which one produced a PR determines what you
+have to check when reviewing it.
 
-- Clean or resolved merges arrive as an `[upstream-sync]` **pull request**.
-- Genuinely ambiguous conflicts abort the merge and file an **issue** instead of
-  guessing.
-- The agent runs with `contents: read` and never pushes to `main`; commits are
-  bundled for a separate safe-outputs job that opens the PR.
-- Issue **#1 `[aw] No-Op Runs`** collects a comment per quiet day. Silence there
-  means the workflow itself has stopped working.
+**01:30 UTC — `.github/workflows/upstream-sync-merge.yml`, plain git, no AI.**
+Fetches `block/buzz`, exits if not behind, exits if a sync PR is already open,
+then runs `git merge --no-ff upstream/main`. Clean merges are pushed by the runner
+and opened as an `[upstream-sync]` PR. Conflicts abort and hand off to 02:00. This
+is the common path and it costs no AI credits.
 
-**Reviewing a sync PR:** read its *Conflicts* and *Needs a human look* sections
-before merging. When a conflict lands in one of the patched files below, the
-resolution is nearly always *keep our marked line, take upstream's everything
-else*.
+**02:00 UTC — `.github/workflows/upstream-sync.md`, Copilot via gh-aw.** Stops
+immediately if a pushed sync branch already contains `upstream/main`, so it cannot
+stack a second PR on the 01:30 one. Otherwise it merges, resolves conflicts, and
+writes the *Conflicts* and *Needs a human look* sections. It runs with
+`contents: read` and never pushes.
+
+**Only the 01:30 stage preserves upstream history**, and that distinction is the
+whole reason it exists. gh-aw moves the agent's work into its PR job as a git
+*patch* (`/tmp/gh-aw/aw-*.patch`), and a patch carries file deltas but not a merge
+commit's second parent. So an agentic sync lands upstream's content under a
+single-parent commit: the merge base never advances, GitHub keeps reporting the
+fork N commits behind, and every later run re-merges from that same stale base and
+re-resolves the same conflicts. This is not a model failure — Copilot merged
+correctly and described it honestly in PR #7 — it is structural, which is why the
+fix was to move the push rather than change engines. PR #7 hit exactly this and was
+repaired by hand in `3ce7c8adc`.
+
+**If an agentic (02:00) PR ever lands, re-merge upstream by hand afterwards** or
+the counter stays stuck: `git merge upstream/main` on `main`, resolve, push.
+
+Issue **#1 `[aw] No-Op Runs`** collects a comment per quiet day from the agentic
+stage. Silence there means that workflow has stopped working — it says nothing
+about the 01:30 stage.
+
+**Reviewing a sync PR:**
+
+- Merge with a **merge commit**, never squash — a squash drops the second parent
+  and undoes the 01:30 stage's entire purpose.
+- Read *Conflicts* and *Needs a human look* if it came from the agentic stage.
+- **A clean merge is not a correct merge, and neither stage can tell you
+  otherwise.** Upstream #3568 auto-merged with no conflict and still made
+  `assemble-manifest`'s gate unreachable in a fork while stranding
+  `release-macos-unsigned` on the old release model — two silent breakages in one
+  file, caught only by reading the diff (`3ce7c8adc`). Always read the diff at the
+  patched files below, `release.yml` above all.
+- When a conflict lands in one of those files, the resolution is nearly always
+  *keep our marked line, take upstream's everything else*.
 
 ### Fork-local file patches
 
@@ -87,7 +115,11 @@ place.
 
 | File | Change | Why |
 |------|--------|-----|
-| `.github/workflows/upstream-sync.md` + `.lock.yml` | new | The daily sync itself |
+| `.github/workflows/upstream-sync.md` + `.lock.yml` | new | The agentic (02:00) sync stage. Edit the `.md` and run `gh aw compile upstream-sync`; the body is **not** inlined into the `.lock.yml`, which stores only a `body_hash`, so a body-only edit shows up as a one-line lock diff |
+| `.github/workflows/upstream-sync-merge.yml` | new | The deterministic (01:30) sync stage — the one that preserves the merge parent. Plain git, no AI. Optional `SYNC_PUSH_TOKEN` secret: a branch pushed with `GITHUB_TOKEN` does not start new workflow runs, so set a PAT if CI stops firing on sync PRs |
+| `.github/workflows/upstream-sync-ci-status.yml` | new | Labels an open sync PR `sync-ci-green`/`sync-ci-red` once checks settle, and re-requests the Copilot review that gh-aw's `reviewers:` fails to attach. Deliberately does not merge |
+| `desktop/src-tauri/src/linux_media.rs` | module-level `cfg_attr(not(linux), allow(dead_code))` | Three items are reachable only from the `cfg(linux)` `enable_media_capture` and the tests, so `clippy -- -D warnings` fails on the lib target on macOS/Windows, breaking the pre-push hook for Mac developers. Upstream lints on Linux only and never sees it. An `allow` rather than a `cfg` because `mod tests` unit-tests them on every platform by design — gating to Linux would trade three lint errors for three broken tests. Belongs upstream |
+| `crates/buzz-relay/src/handlers/ingest.rs`, `crates/buzz-sdk/src/builders.rs` | NIP-SW Starknet wallet binding (`KIND_STARKNET_WALLET_BINDING`, kind:30178) | Fork-only feature woven into upstream files: the ingest-time on-chain attestation check (which cannot move to `handle_side_effects`, since those run after storage — too late to reject) and the SDK builder. Merged cleanly through the 23-commit sync, but they are real divergence in files upstream edits often |
 | `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
