@@ -61,6 +61,22 @@ jobs:
           for pr in $prs; do
             echo "::group::PR #$pr"
 
+            # Ensure Copilot is actually requested. gh-aw's `reviewers: [copilot]`
+            # accepts the value but did not attach it on PR #7 — the
+            # requested-reviewers list came back empty. The login the API accepts
+            # is copilot-pull-request-reviewer[bot]. Idempotent: re-requesting an
+            # existing reviewer is a no-op, and a failure here must not block the
+            # CI verdict below, which is the point of this workflow.
+            if ! gh api "repos/$REPO/pulls/$pr/requested_reviewers" \
+                 --jq '[.users[].login] | index("Copilot")' 2>/dev/null | grep -q '[0-9]'; then
+              gh api -X POST "repos/$REPO/pulls/$pr/requested_reviewers" \
+                -f 'reviewers[]=copilot-pull-request-reviewer[bot]' >/dev/null 2>&1 \
+                && echo "requested Copilot review" \
+                || echo "could not request Copilot review (continuing)"
+            else
+              echo "Copilot already requested"
+            fi
+
             # statusCheckRollup covers both check-runs and legacy commit statuses.
             roll=$(gh pr view "$pr" --repo "$REPO" --json statusCheckRollup)
 

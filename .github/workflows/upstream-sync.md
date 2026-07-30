@@ -54,7 +54,15 @@ safe-outputs:
     # claude-sonnet-4.6, and pinning engine.model changes who *writes* the merge,
     # not who reviews it; gh-aw passes that string through unvalidated, so a wrong
     # value fails the run at inference time.
+    # gh-aw accepts this, but it did not attach on PR #7 — the requested-reviewers
+    # list came back empty and had to be set by API with the bot's real login,
+    # copilot-pull-request-reviewer[bot]. Kept because it is the documented value
+    # and harmless, but upstream-sync-ci-status.yml requests the reviewer directly
+    # so it does not depend on this working.
     reviewers: [copilot]
+    # gh-aw opens drafts by default. A draft cannot be merged and does not get a
+    # Copilot review, so the sync PR would sit unreviewable.
+    draft: false
     max-patch-files: 2000
     max-patch-size: 10240
   create-issue:

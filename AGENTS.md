@@ -144,10 +144,43 @@ reformatting the Terraform.
 | Issues | **enabled** | Off by default on forks; the sync workflow's conflict-escalation output needs them |
 | `Auto-tag on Release PR Merge` | **disabled** | Fires on every merged same-repo PR. A sync PR carrying a `deploy/charts/buzz/Chart.yaml` version bump hits its default lane and tries to mint a token from the `BUZZ_RELEASE_TAGGER` GitHub App, which does not exist here |
 | `sprig-latest` release | **created manually** | `sprig.yml`'s rolling lane calls `gh release edit sprig-latest` with no create-if-missing fallback. Forks inherit no releases, so it failed on every push to `main` until the release existed |
+| Code scanning | **default setup**, weekly, default query suite | CodeQL over `actions`, `javascript-typescript`, `python`, `rust`. Upstream ships no `codeql.yml`, so this is a setting rather than a workflow file — nothing to conflict. Triage below |
 
 Secrets set here: `COPILOT_GITHUB_TOKEN` (sync engine),
 `TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` and `BUZZ_UPDATER_PUBLIC_KEY` (fork's
 own throwaway updater keypair — unrelated to Block's).
+
+### Code scanning triage
+
+All 11 alerts from the first CodeQL run were in files **byte-identical to
+upstream** — no fork-local code was implicated — and all are dismissed. Recorded
+here because dismissals key to an alert number: a sync that re-touches these
+files can raise the same finding under a new number, and without this table the
+analysis gets redone from scratch.
+
+| Rule | Where | Verdict |
+|------|-------|---------|
+| `rust/hard-coded-cryptographic-value` | `buzz-core/src/pairing/crypto.rs:55` | Empty HKDF salt, permitted by RFC 5869 §3.1 and fixed by NIP-AB. The IKM is a 32-byte CSPRNG session secret, so the salt adds nothing; domain separation comes from the `info` string. **False positive** |
+| `rust/hard-coded-cryptographic-value` | `buzz-core/src/pairing/session.rs:114` | `[0u8; 32]` overwritten by `rand::fill` on the next line before any use — an array initializer, not a salt. **False positive** |
+| `rust/hard-coded-cryptographic-value` ×3 | `desktop/src-tauri/src/commands/identity.rs:528,566,582` | The `nonce` argument in unit tests inside `#[cfg(test)] mod nostr_identity_binding_tests`. **Used in tests** |
+| `py/clear-text-storage-sensitive-data` ×3 | `benchmarks/harbor-buzz-orchestra/scripts/benchmark.py:186,236,275` | Secrets the script generates itself (`secrets.token_urlsafe`/`token_hex`) guarding a throwaway local docker stack, written to files created mode `0600`. docker-compose needs a plaintext `.env`. **Won't fix** |
+| `js/xss-through-dom` ×2 | `desktop/src/features/agents/ui/AgentCreationPreview.tsx:752,889` | Sink is `<img src>`, a passive context — `javascript:` URLs do not execute there and SVG loaded via `<img>` cannot run script. The value is the avatar URL the user typed into their own client. **False positive** |
+| `js/incomplete-multi-character-sanitization` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:35` | `htmlInlineToMarkdown` is a markdown normalizer, not a sanitizer. **False positive** |
+| `js/double-escaping` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:26` | **A real bug**, not exploitable. See below |
+
+The one genuine defect is `decodeHtmlEntities`, which decodes `&amp;` *before*
+`&lt;`, so `&amp;lt;` becomes a literal `<`. A README containing escaped HTML
+renders wrong. It is not an XSS: the output goes to `<Markdown>` →
+`react-markdown` 10 with **no `rehype-raw`**, which never renders raw HTML, and
+the custom `messageLinkUrlTransform` still delegates to `defaultUrlTransform` for
+every scheme except `buzz://message?…`, so dangerous protocols stay blocked.
+
+Not patched here on purpose: a one-line reorder in an upstream file, for a
+cosmetic bug, is permanent conflict surface — the fix belongs in `block/buzz`.
+**If a sync ever makes `desktop/src/shared/ui/markdown/nodeCache.ts` render raw
+HTML, or replaces `urlTransform` without delegating, this stops being cosmetic
+and both README alerts become live.** That is the thing to re-check, not the
+alert numbers.
 
 ### What cannot work in a fork
 
