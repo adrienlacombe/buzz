@@ -32,6 +32,24 @@ safe-outputs:
     # REQUEST_CHANGES review for touching protected paths.
     protected-files: allowed
     max: 1
+    # gh-aw's defaults (100 files / 4096 KB) are sized for a small agent-authored
+    # patch. An upstream sync is a `git merge` of upstream's own commits, so its
+    # size is set by upstream's activity, not by anything the agent decides — and
+    # the result is reviewed as a PR before it lands. Sizing these to "whatever
+    # upstream produced" is therefore the correct trade, not a loosened guardrail.
+    #
+    # Measured on the first real sync: 14 commits = 136 files / 926 KB. The
+    # 100-file default blocked the PR outright and the run reported E003 instead
+    # (issue #4) — every non-trivial sync would have failed the same way. At
+    # ~10 files and ~66 KB per commit, a week of drift lands near 700 files and
+    # 6.6 MB, which is why the size cap is raised too rather than only the count.
+    #
+    # 10240 KB is gh-aw's schema maximum, not a chosen value — roughly 155 commits
+    # of headroom at the rate measured above, so about two weeks of drift. If the
+    # sync is ever down longer than that it will fail on size with no knob left,
+    # and the merge has to be done by hand.
+    max-patch-files: 2000
+    max-patch-size: 10240
   create-issue:
     title-prefix: "[upstream-sync] "
     labels: [upstream-sync, automation]
