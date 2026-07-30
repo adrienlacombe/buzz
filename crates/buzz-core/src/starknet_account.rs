@@ -93,6 +93,57 @@ pub fn account_address_from_hex(
     account_address(class_hash, nostr_pubkey)
 }
 
+/// The exact bytes a `NostrAccount` expects to be BIP-340 signed for `tx_hash`.
+///
+/// Mirrors `tx_hash_bytes` in `contracts/src/account.cairo`: the 32-byte
+/// big-endian representation of the felt. The two encodings must agree byte for
+/// byte — if they diverge the account rejects every signature, so this function
+/// and its Cairo counterpart are one definition in two languages.
+#[must_use]
+pub fn tx_hash_message(tx_hash: Felt) -> [u8; 32] {
+    tx_hash.to_bytes_be()
+}
+
+/// Splits a 32-byte big-endian value into `(low, high)` felts.
+fn split_be_32(bytes: &[u8]) -> (Felt, Felt) {
+    let mut high = [0u8; 32];
+    let mut low = [0u8; 32];
+    high[16..].copy_from_slice(&bytes[..16]);
+    low[16..].copy_from_slice(&bytes[16..]);
+    (Felt::from_bytes_be(&low), Felt::from_bytes_be(&high))
+}
+
+/// BIP-340 signs a Starknet transaction hash, in `NostrAccount`'s wire layout.
+///
+/// Returns `[r_low, r_high, s_low, s_high]` — the order `is_valid_bip340` reads,
+/// because a `felt252` cannot hold a `u256` and each scalar is split.
+///
+/// Signing is **deterministic**: no auxiliary randomness, so the same key and
+/// hash always yield the same signature. BIP-340 derives its nonce from a tagged
+/// hash of the secret key and message, so this is safe — auxiliary randomness
+/// only hardens against fault and side-channel attacks, it is not required for
+/// validity. Determinism makes signatures reproducible, which is what lets a
+/// caller re-derive and compare rather than trust.
+///
+/// The caller owns the secret key; nothing here stores, logs, or transmits it.
+pub fn sign_tx_hash(secret_key: &secp256k1::SecretKey, tx_hash: Felt) -> [Felt; 4] {
+    let secp = secp256k1::Secp256k1::new();
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, secret_key);
+    let message = tx_hash_message(tx_hash);
+    let signature = secp.sign_schnorr_no_aux_rand(&message, &keypair);
+    signature_felts(&signature.to_byte_array())
+}
+
+/// Converts a 64-byte BIP-340 signature into the account's four felts.
+///
+/// A BIP-340 signature is `bytes(R.x) || bytes(s)`, each 32 bytes big-endian.
+#[must_use]
+pub fn signature_felts(signature: &[u8; 64]) -> [Felt; 4] {
+    let (r_low, r_high) = split_be_32(&signature[..32]);
+    let (s_low, s_high) = split_be_32(&signature[32..]);
+    [r_low, r_high, s_low, s_high]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +245,106 @@ mod tests {
             Felt::from_hex("0x800000000000000000000000000000000000000000000000000000000000000")
                 .expect("bound");
         assert!(addr < bound);
+    }
+
+    //
+    // Signing
+    //
+
+    /// Published BIP-340 test-vector 0 secret key. Not anyone's key: it is the
+    /// value printed in the Bitcoin BIPs test-vectors file.
+    /// https://github.com/bitcoin/bips/blob/master/bip-0340/test-vectors.csv
+    const VECTOR_0_SECRET: [u8; 32] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 3,
+    ];
+    /// Vector 0's signature over a 32-zero-byte message: R.x then s.
+    const VECTOR_0_R: &str = "e907831f80848d1069a5371b402410364bdf1c5f8307b0084c55f1ce2dca8215";
+    const VECTOR_0_S: &str = "25f66a4a85ea8b71e482a74f382d2ce5ebeee8fdb2172f477df4900d310536c0";
+
+    fn vector_0_key() -> secp256k1::SecretKey {
+        secp256k1::SecretKey::from_byte_array(VECTOR_0_SECRET).expect("published vector key")
+    }
+
+    #[test]
+    fn tx_hash_message_is_32_bytes_big_endian() {
+        // Must equal Cairo's tx_hash_bytes. A divergence makes the account
+        // reject every signature.
+        assert_eq!(tx_hash_message(Felt::ONE)[31], 1);
+        assert_eq!(tx_hash_message(Felt::ONE)[0], 0);
+        assert_eq!(tx_hash_message(Felt::ZERO), [0u8; 32]);
+    }
+
+    #[test]
+    fn signing_reproduces_the_published_bip340_vector() {
+        // The strongest available cross-check: signing tx hash 0 with vector 0's
+        // key must produce vector 0's signature — the very signature the Cairo
+        // verifier accepts in contracts/tests/test_account.cairo. Rust signer and
+        // Cairo verifier are therefore proven to agree, not assumed to.
+        //
+        // Uses aux_rand = 32 zero bytes because that is what the published
+        // vector specifies. Production signing takes the no-aux-rand path.
+        let secp = secp256k1::Secp256k1::new();
+        let keypair = secp256k1::Keypair::from_secret_key(&secp, &vector_0_key());
+        let signature =
+            secp.sign_schnorr_with_aux_rand(&tx_hash_message(Felt::ZERO), &keypair, &[0u8; 32]);
+        let bytes = signature.to_byte_array();
+        assert_eq!(hex::encode(&bytes[..32]), VECTOR_0_R);
+        assert_eq!(hex::encode(&bytes[32..]), VECTOR_0_S);
+    }
+
+    #[test]
+    fn signature_felts_match_the_accounts_wire_layout() {
+        // [r_low, r_high, s_low, s_high] — reassembling must recover the scalars.
+        let r = hex::decode(VECTOR_0_R).expect("r");
+        let s = hex::decode(VECTOR_0_S).expect("s");
+        let mut raw = [0u8; 64];
+        raw[..32].copy_from_slice(&r);
+        raw[32..].copy_from_slice(&s);
+
+        let [r_low, r_high, s_low, s_high] = signature_felts(&raw);
+        assert!(r_high.to_fixed_hex_string().ends_with(&VECTOR_0_R[..32]));
+        assert!(r_low.to_fixed_hex_string().ends_with(&VECTOR_0_R[32..]));
+        assert!(s_high.to_fixed_hex_string().ends_with(&VECTOR_0_S[..32]));
+        assert!(s_low.to_fixed_hex_string().ends_with(&VECTOR_0_S[32..]));
+    }
+
+    #[test]
+    fn production_signing_verifies_under_bip340() {
+        // Independent check: sign with our function, verify with libsecp256k1.
+        let secp = secp256k1::Secp256k1::new();
+        let key = vector_0_key();
+        let keypair = secp256k1::Keypair::from_secret_key(&secp, &key);
+        let tx_hash = Felt::from_hex("0x1234abcd").expect("hash");
+
+        let felts = sign_tx_hash(&key, tx_hash);
+        // Rebuild the 64-byte signature from the felts we emit.
+        let mut raw = [0u8; 64];
+        raw[..16].copy_from_slice(&felts[1].to_bytes_be()[16..]);
+        raw[16..32].copy_from_slice(&felts[0].to_bytes_be()[16..]);
+        raw[32..48].copy_from_slice(&felts[3].to_bytes_be()[16..]);
+        raw[48..].copy_from_slice(&felts[2].to_bytes_be()[16..]);
+
+        let signature = secp256k1::schnorr::Signature::from_byte_array(raw);
+        let (xonly, _) = keypair.x_only_public_key();
+        secp.verify_schnorr(&signature, &tx_hash_message(tx_hash), &xonly)
+            .expect("our own signature must verify");
+    }
+
+    #[test]
+    fn signing_is_deterministic() {
+        let key = vector_0_key();
+        let hash = Felt::from_hex("0xfeed").expect("hash");
+        assert_eq!(sign_tx_hash(&key, hash), sign_tx_hash(&key, hash));
+    }
+
+    #[test]
+    fn different_hashes_give_different_signatures() {
+        // Otherwise one signature would authorise every transaction.
+        let key = vector_0_key();
+        let a = sign_tx_hash(&key, Felt::from_hex("0x1").expect("a"));
+        let b = sign_tx_hash(&key, Felt::from_hex("0x2").expect("b"));
+        assert_ne!(a, b);
     }
 
     #[test]
