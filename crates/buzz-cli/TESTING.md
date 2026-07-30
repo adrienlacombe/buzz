@@ -495,6 +495,10 @@ relay, and `publish` additionally needs the relay to have
 # 1. Local: print the SNIP-12 document to sign. Note the signed_at it echoes.
 buzz wallet message --address 0x04a5... --chain SN_SEPOLIA
 
+# 1b. Fully offline — no relay and no BUZZ_PRIVATE_KEY, since only the public
+#     key enters the message. Useful when the signing machine holds no secret.
+buzz wallet message --address 0x04a5... --chain SN_SEPOLIA --pubkey <64-hex>
+
 # 2. Sign the `typed_data` object with the account (Argent/Braavos), then
 #    publish with the SAME --signed-at. A different value derives a different
 #    message hash and the relay rejects it.
@@ -659,7 +663,7 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 60 | `notes ls` | ☐ | Own, --author all, --tag, --limit |
 | 61 | `notes rm` | ☐ | Delete→get 404, double-delete idempotent, missing slug → NotFound |
 | 62 | `users set-status` | ☐ | Text+emoji, text only, emoji-only (`--text ""`), `--clear`, `--clear` + `--text` → exit 1 |
-| 63 | `wallet message` | ☐ | Local, no relay; echoes signed_at; --signed-at override |
+| 63 | `wallet message` | ☐ | Local, no relay; echoes signed_at; --signed-at override; --pubkey needs no BUZZ_PRIVATE_KEY |
 | 64 | `wallet publish` | ☐ | Needs relay RPC configured; wrong --signed-at rejected; replace per chain |
 | 65 | `wallet get` | ☐ | Own, --pubkey, --chain scoping |
 | 66 | `wallet lookup` | ☐ | Reverse by address; multiple claimants not collapsed |

@@ -32,11 +32,18 @@ fn parse_signer_scheme(value: &str) -> Result<SignerScheme, CliError> {
 
 /// Print the SNIP-12 document to sign, plus the hash it derives to.
 ///
+/// Takes the pubkey as a string rather than reading it from a client, because
+/// this derivation needs only the **public** key. Requiring a private key to
+/// produce a document you hand to a wallet would mean the secret has to be
+/// present on whatever machine prepares the signing request, for no reason.
+/// `run()` routes the `--pubkey` form before the auth gate; without it the
+/// caller's own identity is used.
+///
 /// `signed_at` is echoed because `publish` must be given the *same* value — the
 /// relay re-derives the hash from it, so a different timestamp produces a
 /// different message and the attestation is rejected.
-fn cmd_message(
-    client: &BuzzClient,
+pub fn cmd_message(
+    pubkey: &str,
     address: &str,
     chain: &str,
     signed_at: Option<u64>,
@@ -48,9 +55,8 @@ fn cmd_message(
             .map_err(|e| CliError::Other(format!("system clock before unix epoch: {e}")))?
             .as_secs(),
     };
-    let pubkey = client.keys().public_key().to_hex();
     let message = BindingMessage {
-        nostr_pubkey: &pubkey,
+        nostr_pubkey: pubkey,
         chain_id: chain,
         signed_at,
         account_address: address,
@@ -165,7 +171,16 @@ pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), 
             address,
             chain,
             signed_at,
-        } => cmd_message(client, &address, &chain, signed_at),
+            pubkey,
+        } => {
+            // `run()` short-circuits the --pubkey form before auth; reaching here
+            // with it set is harmless, so resolve rather than assume.
+            let pubkey = match pubkey {
+                Some(value) => value,
+                None => client.keys().public_key().to_hex(),
+            };
+            cmd_message(&pubkey, &address, &chain, signed_at)
+        }
         WalletCmd::Publish {
             address,
             chain,

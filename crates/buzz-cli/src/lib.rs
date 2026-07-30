@@ -748,6 +748,12 @@ pub enum WalletCmd {
         /// Unix seconds to bind into the message (default: now)
         #[arg(long)]
         signed_at: Option<u64>,
+        /// Derive for this pubkey (32-byte hex) instead of your own identity.
+        ///
+        /// Runs fully offline: no relay, and no BUZZ_PRIVATE_KEY needed, since
+        /// only the public key goes into the message.
+        #[arg(long)]
+        pubkey: Option<String>,
     },
     /// Publish a wallet binding attested by your Starknet account
     Publish {
@@ -1836,6 +1842,18 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             PackCmd::Validate { path } => commands::pack::cmd_validate(path),
             PackCmd::Inspect { path } => commands::pack::cmd_inspect(path),
         };
+    }
+
+    // `wallet message --pubkey` is local-only: it derives a SNIP-12 document
+    // from a public key, so it must not require a private key to be present.
+    if let Cmd::Wallet(WalletCmd::Message {
+        address,
+        chain,
+        signed_at,
+        pubkey: Some(pubkey),
+    }) = &cli.command
+    {
+        return commands::wallet::cmd_message(pubkey, address, chain, *signed_at);
     }
 
     // Auth: private key is required for all relay operations.
