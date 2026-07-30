@@ -85,6 +85,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 # Random number generation — full jitter for exponential backoff in with_retry
 rand = { workspace = true }
+starknet-core = "0.16.0"
 
 [dev-dependencies]
 # Scratch files for channel-templates.json fixtures in tests

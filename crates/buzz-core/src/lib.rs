@@ -36,6 +36,8 @@ pub mod presence;
 pub mod relay;
 /// SNIP-12 typed-data hashing for NIP-SW attestations.
 pub mod snip12;
+/// Address derivation for Nostr-key-controlled Starknet accounts.
+pub mod starknet_account;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
 /// Schnorr signature and event ID verification.

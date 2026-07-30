@@ -526,6 +526,33 @@ Worth checking explicitly:
 - Bindings never appear in `messages search` results (migration 0027).
 
 
+### 6.14 Nostr-Controlled Account Address (contracts/)
+
+Both commands are local — no relay, no chain, and `--pubkey` needs no
+`BUZZ_PRIVATE_KEY`. This derives the account controlled by the **Nostr key**,
+which is a different account from any wallet-managed one a NIP-SW binding points
+at; do not confuse the two addresses.
+
+```bash
+# Class hash of the current build. Recompute after any contract change — a stale
+# value derives an address nobody can deploy to.
+cd contracts && scarb build && cd ..
+buzz wallet class-hash
+
+# Derive the counterfactual address.
+buzz wallet address --pubkey <64-hex> --class-hash 0x038a57ff...
+```
+
+Worth checking:
+
+- Changing the pubkey changes the address; changing the class hash changes it too.
+- `constructor_calldata` is `[low, high]` — low is the *trailing* 16 bytes of the
+  pubkey. Reversed, the derivation silently yields an unreachable address.
+- The address is below 2^251 (the Starknet addressable bound).
+- **Not yet verified against a real deployment.** The class is not declared on
+  chain, so treat the address as theoretical until a deploy confirms it.
+
+
 ## 7. Error Path Testing
 
 Verify the CLI produces correct JSON on stderr and correct exit codes.
@@ -667,3 +694,5 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 64 | `wallet publish` | ☐ | Needs relay RPC configured; wrong --signed-at rejected; replace per chain |
 | 65 | `wallet get` | ☐ | Own, --pubkey, --chain scoping |
 | 66 | `wallet lookup` | ☐ | Reverse by address; multiple claimants not collapsed |
+| 67 | `wallet class-hash` | ☐ | Local, no relay; recomputes after `scarb build`; bad path → exit 1 |
+| 68 | `wallet address` | ☐ | Local; --pubkey needs no key; changes with pubkey and with class hash |

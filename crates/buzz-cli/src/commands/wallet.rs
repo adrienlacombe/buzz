@@ -14,6 +14,7 @@ use crate::client::{normalize_write_response, BuzzClient};
 use crate::error::CliError;
 use buzz_core::kind::KIND_STARKNET_WALLET_BINDING;
 use buzz_core::snip12::BindingMessage;
+use buzz_core::starknet_account::{account_address_from_hex, constructor_calldata, DEPLOY_SALT};
 use buzz_core::wallet_binding::{
     i_tag_value, Attestation, AttestationScheme, SignerScheme, WalletBinding,
 };
@@ -171,6 +172,51 @@ async fn cmd_lookup(client: &BuzzClient, address: &str, chain: &str) -> Result<(
     Ok(())
 }
 
+/// Compute the class hash of a compiled Sierra contract artifact.
+///
+/// Read from the build output rather than hardcoded: the class hash changes with
+/// every contract edit, and a stale constant would derive addresses nobody can
+/// deploy to. Local only — no relay, no chain.
+pub fn cmd_class_hash(artifact: &str) -> Result<(), CliError> {
+    let json = std::fs::read_to_string(artifact)
+        .map_err(|e| CliError::Usage(format!("cannot read artifact '{artifact}': {e}")))?;
+    let class: starknet_core::types::contract::SierraClass = serde_json::from_str(&json)
+        .map_err(|e| CliError::Usage(format!("not a Sierra contract class: {e}")))?;
+    let class_hash = class
+        .class_hash()
+        .map_err(|e| CliError::Other(format!("class hash computation failed: {e}")))?;
+    let output = serde_json::json!({
+        "artifact": artifact,
+        "class_hash": class_hash.to_fixed_hex_string(),
+    });
+    println!("{}", serde_json::to_string(&output).unwrap_or_default());
+    Ok(())
+}
+
+/// Derive the counterfactual Starknet account address for a Nostr pubkey.
+///
+/// The address exists as a computation before the account exists on chain, so it
+/// can be funded first and deployed later out of its own balance. Local only.
+pub fn cmd_address(pubkey: &str, class_hash: &str) -> Result<(), CliError> {
+    let address =
+        account_address_from_hex(class_hash, pubkey).map_err(|e| CliError::Usage(e.to_string()))?;
+    let calldata = constructor_calldata(pubkey).map_err(|e| CliError::Usage(e.to_string()))?;
+    let output = serde_json::json!({
+        "nostr_pubkey": pubkey,
+        "class_hash": class_hash,
+        "salt": DEPLOY_SALT.to_fixed_hex_string(),
+        "deployer_address": "0x0",
+        "constructor_calldata": calldata
+            .iter()
+            .map(starknet_core::types::Felt::to_fixed_hex_string)
+            .collect::<Vec<_>>(),
+        "address": address.to_fixed_hex_string(),
+        "note": "counterfactual: fund this address, then deploy the account from its own balance. Verify against a real deployment before sending anything you cannot lose.",
+    });
+    println!("{}", serde_json::to_string(&output).unwrap_or_default());
+    Ok(())
+}
+
 pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), CliError> {
     use crate::WalletCmd;
     match cmd {
@@ -212,6 +258,14 @@ pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), 
             cmd_get(client, pubkey.as_deref(), chain.as_deref()).await
         }
         WalletCmd::Lookup { address, chain } => cmd_lookup(client, &address, &chain).await,
+        WalletCmd::ClassHash { artifact } => cmd_class_hash(&artifact),
+        WalletCmd::Address { pubkey, class_hash } => {
+            let pubkey = match pubkey {
+                Some(value) => value,
+                None => client.keys().public_key().to_hex(),
+            };
+            cmd_address(&pubkey, &class_hash)
+        }
     }
 }
 

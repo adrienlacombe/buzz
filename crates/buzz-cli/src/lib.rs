@@ -800,6 +800,32 @@ pub enum WalletCmd {
         #[arg(long)]
         chain: String,
     },
+    /// Compute the class hash of a compiled Sierra artifact
+    ///
+    /// Read from the build output rather than hardcoded: the class hash changes
+    /// with every contract edit, and a stale value derives addresses nobody can
+    /// deploy to. Runs offline.
+    ClassHash {
+        /// Path to a *.contract_class.json produced by `scarb build`
+        #[arg(
+            long,
+            default_value = "contracts/target/dev/buzz_starknet_NostrAccount.contract_class.json"
+        )]
+        artifact: String,
+    },
+    /// Derive the Nostr-controlled Starknet account address for a pubkey
+    ///
+    /// The address is a hash of the deployment parameters, so it exists before
+    /// the account does: fund it first, deploy later from its own balance.
+    /// Runs offline; needs no BUZZ_PRIVATE_KEY when --pubkey is given.
+    Address {
+        /// Derive for this pubkey (32-byte hex). Defaults to your own identity
+        #[arg(long)]
+        pubkey: Option<String>,
+        /// Declared class hash of the account contract (see `wallet class-hash`)
+        #[arg(long)]
+        class_hash: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1861,6 +1887,19 @@ async fn run(cli: Cli) -> Result<(), CliError> {
     }) = &cli.command
     {
         return commands::wallet::cmd_message(pubkey, address, chain, *signed_at, *typed_data_only);
+    }
+
+    // `wallet class-hash` reads a local file, and `wallet address --pubkey`
+    // derives from a public key. Neither touches the relay or needs a secret.
+    if let Cmd::Wallet(WalletCmd::ClassHash { artifact }) = &cli.command {
+        return commands::wallet::cmd_class_hash(artifact);
+    }
+    if let Cmd::Wallet(WalletCmd::Address {
+        pubkey: Some(pubkey),
+        class_hash,
+    }) = &cli.command
+    {
+        return commands::wallet::cmd_address(pubkey, class_hash);
     }
 
     // Auth: private key is required for all relay operations.
