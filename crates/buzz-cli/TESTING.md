@@ -484,6 +484,44 @@ buzz notes rm --name does-not-exist   # exits non-zero
 
 ---
 
+### 6.13 Wallet Bindings (NIP-SW Starknet, kind:30178)
+
+`wallet message` is local-only — no relay, no chain. The other three need a
+relay, and `publish` additionally needs the relay to have
+`BUZZ_STARKNET_RPC_<CHAIN_ID>` configured: verification happens at ingest and
+**fails closed**, so an unconfigured relay rejects every binding.
+
+```bash
+# 1. Local: print the SNIP-12 document to sign. Note the signed_at it echoes.
+buzz wallet message --address 0x04a5... --chain SN_SEPOLIA
+
+# 2. Sign the `typed_data` object with the account (Argent/Braavos), then
+#    publish with the SAME --signed-at. A different value derives a different
+#    message hash and the relay rejects it.
+buzz wallet publish --address 0x04a5... --chain SN_SEPOLIA \
+  --signed-at 1785400000 --signature 0xaa --signature 0xbb \
+  --signer-scheme secp256k1-ecdsa
+
+# 3. Forward lookup: bindings you published.
+buzz wallet get
+buzz wallet get --chain SN_SEPOLIA
+buzz wallet get --pubkey <other-hex>
+
+# 4. Reverse lookup: which identities claim an address.
+buzz wallet lookup --address 0x04a5... --chain SN_SEPOLIA
+```
+
+Worth checking explicitly:
+
+- Republishing for the same chain **replaces** (NIP-33 LWW keyed by
+  `(pubkey, 30178, chain_id)`); a second chain coexists rather than replacing.
+- A wrong `--signed-at` is rejected by the relay, not accepted silently.
+- `wallet lookup` may legitimately return **several** bindings from different
+  pubkeys for one address, and that is not a bug — on a conforming relay each was
+  attested by that account.
+- Bindings never appear in `messages search` results (migration 0027).
+
+
 ## 7. Error Path Testing
 
 Verify the CLI produces correct JSON on stderr and correct exit codes.
@@ -621,3 +659,7 @@ buzz channels delete --channel "$FORUM_ID" | jq .
 | 60 | `notes ls` | ☐ | Own, --author all, --tag, --limit |
 | 61 | `notes rm` | ☐ | Delete→get 404, double-delete idempotent, missing slug → NotFound |
 | 62 | `users set-status` | ☐ | Text+emoji, text only, emoji-only (`--text ""`), `--clear`, `--clear` + `--text` → exit 1 |
+| 63 | `wallet message` | ☐ | Local, no relay; echoes signed_at; --signed-at override |
+| 64 | `wallet publish` | ☐ | Needs relay RPC configured; wrong --signed-at rejected; replace per chain |
+| 65 | `wallet get` | ☐ | Own, --pubkey, --chain scoping |
+| 66 | `wallet lookup` | ☐ | Reverse by address; multiple claimants not collapsed |

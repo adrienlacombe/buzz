@@ -197,6 +197,9 @@ enum Cmd {
     /// Look up users and manage profiles and presence
     #[command(subcommand)]
     Users(UsersCmd),
+    /// Publish and read NIP-SW Starknet wallet bindings
+    #[command(subcommand)]
+    Wallet(WalletCmd),
     /// Create, trigger, and manage workflows
     #[command(subcommand)]
     Workflows(WorkflowsCmd),
@@ -725,6 +728,65 @@ pub enum ReactionsCmd {
         /// Event ID (64-char hex)
         #[arg(long)]
         event: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WalletCmd {
+    /// Print the SNIP-12 document to sign with your Starknet account
+    ///
+    /// Pass the same --signed-at to `publish`: the relay re-derives the message
+    /// hash from it, so a different timestamp yields a different message and the
+    /// attestation is rejected.
+    Message {
+        /// Starknet account contract address, felt hex (0x-prefixed)
+        #[arg(long)]
+        address: String,
+        /// Starknet chain id short string, e.g. SN_MAIN or SN_SEPOLIA
+        #[arg(long)]
+        chain: String,
+        /// Unix seconds to bind into the message (default: now)
+        #[arg(long)]
+        signed_at: Option<u64>,
+    },
+    /// Publish a wallet binding attested by your Starknet account
+    Publish {
+        /// Starknet account contract address, felt hex (0x-prefixed)
+        #[arg(long)]
+        address: String,
+        /// Starknet chain id short string, e.g. SN_MAIN
+        #[arg(long)]
+        chain: String,
+        /// Signature felt, repeat once per felt in signer order
+        #[arg(long)]
+        signature: Vec<String>,
+        /// The exact --signed-at value used with `wallet message`
+        #[arg(long)]
+        signed_at: u64,
+        /// Account contract class hash, felt hex. Optional
+        #[arg(long)]
+        class_hash: Option<String>,
+        /// Signature scheme the account validates with
+        #[arg(long, default_value = "stark")]
+        signer_scheme: String,
+    },
+    /// Read bindings published by a pubkey (defaults to your own)
+    Get {
+        /// Author pubkey, 32-byte hex. Defaults to your own identity
+        #[arg(long)]
+        pubkey: Option<String>,
+        /// Restrict to one chain id
+        #[arg(long)]
+        chain: Option<String>,
+    },
+    /// Reverse lookup: which identities claim a given account address
+    Lookup {
+        /// Starknet account contract address, felt hex (0x-prefixed)
+        #[arg(long)]
+        address: String,
+        /// Starknet chain id short string, e.g. SN_MAIN
+        #[arg(long)]
+        chain: String,
     },
 }
 
@@ -1811,6 +1873,7 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         Cmd::Emoji(sub) => commands::emoji::dispatch(sub, &client).await,
         Cmd::Dms(sub) => commands::dms::dispatch(sub, &client).await,
         Cmd::Users(sub) => commands::users::dispatch(sub, &client, &cli.format).await,
+        Cmd::Wallet(sub) => commands::wallet::dispatch(sub, &client).await,
         Cmd::Workflows(sub) => commands::workflows::dispatch(sub, &client).await,
         Cmd::Feed(sub) => commands::feed::dispatch(sub, &client, &cli.format).await,
         Cmd::Social(sub) => commands::social::dispatch(sub, &client).await,
@@ -1885,6 +1948,7 @@ mod tests {
             "social",
             "upload",
             "users",
+            "wallet",
             "workflows",
         ];
 
