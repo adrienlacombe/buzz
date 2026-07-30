@@ -477,6 +477,222 @@ jobs:
           ARCHIVE_PATH: ${{ steps.artifacts.outputs.archive }}
           SIG_PATH: ${{ steps.artifacts.outputs.sig }}
 
+  # FORK-LOCAL PATCH (adrienlacombe/buzz): unsigned macOS release lane, new job.
+  #
+  # The signed `release` job above cannot run outside block/buzz: it calls
+  # block/apple-codesign-action, whose Apple certificate lives inside Block's
+  # internal codesign_helper Lambda, so no secret a fork could supply makes it
+  # work. Without a macOS lane at all, this fork's latest.json advertises only
+  # linux-x86_64 and windows-x86_64, and Mac installs never auto-update.
+  #
+  # This lane produces the same updater artifacts with no OS trust anchor. The
+  # build already emits <Product>.app.tar.gz and its .sig, because
+  # build-release-config.mjs sets createUpdaterArtifacts and the Tauri signing
+  # key is in the environment — so unlike the signed lane there is nothing to
+  # rebuild afterwards, and none of its Buzz.app-hardcoded paths are inherited.
+  #
+  # What this deliberately does NOT give, and users must be told:
+  #   - The app is only ad-hoc signed and never notarized, so a FIRST install
+  #     still needs `xattr -dr com.apple.quarantine`. Auto-update does not remove
+  #     that step, it stops it repeating: later updates are written by the app
+  #     itself and so are never quarantined.
+  #   - The ad-hoc cdhash changes every build, so macOS may treat each update as
+  #     a different program for keychain ACL purposes and re-prompt for, or lose,
+  #     access to the stored identity. The app-data identity.key fallback is what
+  #     carries the identity through.
+  #   - The only thing gating what installs is the Tauri updater key plus write
+  #     access to this repo's releases. There is no second opinion from Apple.
+  #
+  # Mutually exclusive with `release` by construction: that job requires
+  # block/buzz and this one requires NOT block/buzz, so exactly one can ever
+  # supply darwin-aarch64. assemble-manifest asserts that rather than trusting it.
+  release-macos-unsigned:
+    name: Release macOS (unsigned)
+    if: |
+      github.repository == (vars.RELEASE_REPO != '' && vars.RELEASE_REPO || 'block/buzz') &&
+      github.repository != 'block/buzz'
+    runs-on: macos-latest
+    needs: setup
+    # Longer than the signed lane's 60: that one is only ever exercised with a
+    # warm mesh-llama cache, and a cold Metal llama build is the slow path here.
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    outputs:
+      archive_name: ${{ steps.artifacts.outputs.archive_name }}
+      sig: ${{ steps.read-sig.outputs.sig }}
+    env:
+      VERSION: ${{ needs.setup.outputs.version }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ needs.setup.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag-bound release source
+        run: scripts/verify-release-ref.sh v "$VERSION"
+
+      - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+
+      - name: Install desktop dependencies
+        run: just desktop-install-ci
+
+      - name: Patch version
+        run: |
+          cd desktop && node scripts/set-version-from-tag.mjs "$VERSION"
+          cd src-tauri && cargo update --workspace
+
+      - name: Generate release config
+        run: cd desktop && node scripts/build-release-config.mjs
+        env:
+          BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
+          BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
+
+      - name: Build sidecars
+        run: |
+          cargo build --release -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
+          ./scripts/bundle-sidecars.sh
+
+      # Read from desktop/src-tauri/Cargo.lock, NOT the root one. Desktop is
+      # excluded from the root workspace, so the two locks pin mesh-llm
+      # independently and the step below fetches the *desktop* manifest — the
+      # root lock names a checkout that is never fetched. The signed lane above
+      # (:151) and signed-macos-canary.yml:104 still carry that bug; it is
+      # masked there by a warm cache. Same fix as ci.yml and macos-canary.yml.
+      - name: Resolve mesh-llm rev
+        id: mesh_rev
+        run: |
+          set -euo pipefail
+          REV=$(python3 -c 'import tomllib; d=tomllib.load(open("desktop/src-tauri/Cargo.lock", "rb")); p=next(p for p in d["package"] if p["name"] == "mesh-llm-sdk"); print(p["source"].rsplit("#", 1)[1])')
+          [[ -n "$REV" ]] || { echo "::error::could not resolve mesh-llm rev from desktop/src-tauri/Cargo.lock"; exit 1; }
+          echo "rev=$REV" >> "$GITHUB_OUTPUT"
+          echo "short=${REV:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore mesh llama build cache
+        id: llama_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ github.workspace }}/.cache/mesh-llama
+          key: mesh-llama-${{ runner.os }}-metal-${{ steps.mesh_rev.outputs.rev }}
+
+      - name: Build mesh llama native libraries
+        if: steps.llama_cache.outputs.cache-hit != 'true'
+        env:
+          MESH_REV_SHORT: ${{ steps.mesh_rev.outputs.short }}
+        run: |
+          set -euo pipefail
+          cargo fetch --manifest-path desktop/src-tauri/Cargo.toml
+          SHORT="$MESH_REV_SHORT"
+          MESH_ROOT=$(find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -path "*/$SHORT" -type d -name "$SHORT" | head -1)
+          if [[ -z "$MESH_ROOT" ]]; then
+            echo "::error::mesh-llm checkout for $SHORT not found after cargo fetch"
+            exit 1
+          fi
+          export LLAMA_STAGE_BACKEND=metal
+          export LLAMA_STAGE_BUILD_DIR="$GITHUB_WORKSPACE/.cache/mesh-llama/build-stage-abi-metal"
+          export CMAKE_OSX_DEPLOYMENT_TARGET=10.15
+          "$MESH_ROOT/scripts/prepare-llama.sh" pinned
+          "$MESH_ROOT/scripts/build-llama.sh" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+
+      - name: Save mesh llama build cache
+        if: steps.llama_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ github.workspace }}/.cache/mesh-llama
+          key: mesh-llama-${{ runner.os }}-metal-${{ steps.mesh_rev.outputs.rev }}
+
+      # --no-sign skips Apple signing; the linker still applies an ad-hoc
+      # signature, which is what lets the result run on Apple Silicon at all.
+      # The Tauri signing key here signs the *updater archive*, which is a
+      # separate trust chain from Apple's and the only one this lane has.
+      - name: Build unsigned Tauri app
+        run: cd desktop && pnpm tauri build --verbose --no-sign --features mesh-llm --config src-tauri/tauri.release.conf.json
+        env:
+          BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
+          BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+          MACOSX_DEPLOYMENT_TARGET: "10.15"
+          CMAKE_OSX_DEPLOYMENT_TARGET: "10.15"
+          LLAMA_STAGE_BACKEND: metal
+          LLAMA_STAGE_BUILD_DIR: ${{ github.workspace }}/.cache/mesh-llama/build-stage-abi-metal
+          SKIPPY_LLAMA_AUTO_BUILD: "0"
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+
+      - name: Locate build artifacts
+        id: artifacts
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="desktop/src-tauri/target/release/bundle"
+
+          DMG=$(find "$BUNDLE_DIR/dmg" -name '*.dmg' -type f | head -1)
+          if [[ -z "$DMG" ]]; then
+            echo "::error::No DMG found in $BUNDLE_DIR/dmg"
+            exit 1
+          fi
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+
+          # Discovered by glob, never by product name: this fork renamed
+          # productName to BitcoinMarkets, and the signed lane's hardcoded
+          # Buzz.app paths are exactly what that rename would have broken.
+          ARCHIVE=$(find "$BUNDLE_DIR/macos" -name '*.tar.gz' ! -name '*.sig' -type f | head -1)
+          SIG="${ARCHIVE}.sig"
+          if [[ -z "$ARCHIVE" || ! -f "$SIG" ]]; then
+            echo "::error::Updater archive or signature not found in $BUNDLE_DIR/macos — is createUpdaterArtifacts set and TAURI_SIGNING_PRIVATE_KEY present?"
+            exit 1
+          fi
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "archive_name=$(basename "$ARCHIVE")" >> "$GITHUB_OUTPUT"
+          echo "sig=$SIG" >> "$GITHUB_OUTPUT"
+
+      - name: Set DMG Finder label text size
+        env:
+          DMG_PATH: ${{ steps.artifacts.outputs.dmg }}
+        run: desktop/scripts/set-dmg-finder-text-size.sh "$DMG_PATH" 14
+
+      # Records what the app is and is not, so the absence of notarization is a
+      # published fact rather than something a user discovers from Gatekeeper.
+      - name: Report signing state
+        run: |
+          APP=$(find desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d | head -1)
+          echo "--- codesign -dv (expect: adhoc) ---"
+          codesign -dv --verbose=2 "$APP" 2>&1 || echo "(no signature at all)"
+          echo "--- spctl --assess (expect: rejected, unnotarized) ---"
+          spctl --assess --type execute --verbose=4 "$APP" 2>&1 || true
+
+      - name: Read updater signature
+        id: read-sig
+        run: echo "sig=$(cat "$SIG_PATH")" >> "$GITHUB_OUTPUT"
+        env:
+          SIG_PATH: ${{ steps.artifacts.outputs.sig }}
+
+      - name: Upload unsigned DMG to versioned GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DMG_PATH: ${{ steps.artifacts.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          # Renamed to carry -unsigned, as macos-canary.yml does: the filename is
+          # the only warning a user gets before double-clicking it.
+          BASE=$(basename "$DMG_PATH" .dmg)
+          STAGED="${RUNNER_TEMP}/${BASE}-unsigned.dmg"
+          cp "$DMG_PATH" "$STAGED"
+          gh release upload "v${VERSION}" "$STAGED" --clobber
+
+      - name: Upload updater archive to rolling release
+        if: github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
+        run: |
+          gh release upload buzz-desktop-latest \
+            "$ARCHIVE_PATH" \
+            "$SIG_PATH" \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARCHIVE_PATH: ${{ steps.artifacts.outputs.archive }}
+          SIG_PATH: ${{ steps.artifacts.outputs.sig }}
+
   release-linux:
     name: Release Linux
     # FORK-LOCAL PATCH (adrienlacombe/buzz): needs only the Tauri updater
@@ -863,7 +1079,9 @@ jobs:
       needs.setup.result == 'success' &&
       github.ref == format('refs/tags/v{0}', needs.setup.outputs.version)
     runs-on: ubuntu-latest
-    needs: [setup, release, release-macos-x64, release-linux, release-windows]
+    # FORK-LOCAL PATCH (adrienlacombe/buzz): release-macos-unsigned added. It is
+    # the fork's darwin-aarch64 provider, mutually exclusive with `release`.
+    needs: [setup, release, release-macos-unsigned, release-macos-x64, release-linux, release-windows]
     timeout-minutes: 10
     permissions:
       contents: write
@@ -883,16 +1101,32 @@ jobs:
       - name: Write signature files
         env:
           RESULT_ARM64: ${{ needs.release.result }}
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): the fork's darwin-aarch64.
+          RESULT_MAC_UNSIGNED: ${{ needs.release-macos-unsigned.result }}
           RESULT_X64: ${{ needs.release-macos-x64.result }}
           RESULT_LINUX: ${{ needs.release-linux.result }}
           RESULT_WIN: ${{ needs.release-windows.result }}
           SIG_ARM64: ${{ needs.release.outputs.sig }}
+          SIG_MAC_UNSIGNED: ${{ needs.release-macos-unsigned.outputs.sig }}
           SIG_X64: ${{ needs.release-macos-x64.outputs.sig }}
           SIG_LINUX: ${{ needs.release-linux.outputs.sig }}
           SIG_WIN: ${{ needs.release-windows.outputs.sig }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/sigs
+
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): two jobs can supply
+          # darwin-aarch64 — the signed `release` (block/buzz only) and this
+          # fork's `release-macos-unsigned` (never block/buzz). Their `if:`
+          # conditions are complementary, so exactly one can run. Asserted rather
+          # than assumed: if both ever succeeded, the later write_sig would
+          # silently overwrite the earlier and the manifest would carry one
+          # platform's signature against the other's URL, which no client could
+          # verify and no later step would catch.
+          if [[ "$RESULT_ARM64" == "success" && "$RESULT_MAC_UNSIGNED" == "success" ]]; then
+            echo "::error::Both the signed and unsigned macOS lanes succeeded; they must be mutually exclusive"
+            exit 1
+          fi
 
           write_sig() {
             local result="$1" platform="$2" sig="$3"
@@ -903,6 +1137,7 @@ jobs:
           }
 
           write_sig "$RESULT_ARM64" darwin-aarch64 "$SIG_ARM64"
+          write_sig "$RESULT_MAC_UNSIGNED" darwin-aarch64 "$SIG_MAC_UNSIGNED"
           write_sig "$RESULT_X64" darwin-x86_64 "$SIG_X64"
           write_sig "$RESULT_LINUX" linux-x86_64 "$SIG_LINUX"
           write_sig "$RESULT_WIN" windows-x86_64 "$SIG_WIN"
@@ -910,10 +1145,13 @@ jobs:
       - name: Verify archive URLs are accessible
         env:
           RESULT_ARM64: ${{ needs.release.result }}
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): the fork's darwin-aarch64.
+          RESULT_MAC_UNSIGNED: ${{ needs.release-macos-unsigned.result }}
           RESULT_X64: ${{ needs.release-macos-x64.result }}
           RESULT_LINUX: ${{ needs.release-linux.result }}
           RESULT_WIN: ${{ needs.release-windows.result }}
           ARCHIVE_ARM64: ${{ needs.release.outputs.archive_name }}
+          ARCHIVE_MAC_UNSIGNED: ${{ needs.release-macos-unsigned.outputs.archive_name }}
           ARCHIVE_X64: ${{ needs.release-macos-x64.outputs.archive_name }}
           ARCHIVE_LINUX: ${{ needs.release-linux.outputs.archive_name }}
           ARCHIVE_WIN: ${{ needs.release-windows.outputs.archive_name }}
@@ -935,6 +1173,7 @@ jobs:
           }
 
           add_archive "$RESULT_ARM64" darwin-aarch64 "$ARCHIVE_ARM64"
+          add_archive "$RESULT_MAC_UNSIGNED" darwin-aarch64 "$ARCHIVE_MAC_UNSIGNED"
           add_archive "$RESULT_X64" darwin-x86_64 "$ARCHIVE_X64"
           add_archive "$RESULT_LINUX" linux-x86_64 "$ARCHIVE_LINUX"
           add_archive "$RESULT_WIN" windows-x86_64 "$ARCHIVE_WIN"
@@ -960,10 +1199,13 @@ jobs:
       - name: Generate unified latest.json
         env:
           RESULT_ARM64: ${{ needs.release.result }}
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): the fork's darwin-aarch64.
+          RESULT_MAC_UNSIGNED: ${{ needs.release-macos-unsigned.result }}
           RESULT_X64: ${{ needs.release-macos-x64.result }}
           RESULT_LINUX: ${{ needs.release-linux.result }}
           RESULT_WIN: ${{ needs.release-windows.result }}
           ARCHIVE_ARM64: ${{ needs.release.outputs.archive_name }}
+          ARCHIVE_MAC_UNSIGNED: ${{ needs.release-macos-unsigned.outputs.archive_name }}
           ARCHIVE_X64: ${{ needs.release-macos-x64.outputs.archive_name }}
           ARCHIVE_LINUX: ${{ needs.release-linux.outputs.archive_name }}
           ARCHIVE_WIN: ${{ needs.release-windows.outputs.archive_name }}
@@ -985,6 +1227,7 @@ jobs:
           }
 
           add_triple "$RESULT_ARM64" darwin-aarch64 "$ARCHIVE_ARM64"
+          add_triple "$RESULT_MAC_UNSIGNED" darwin-aarch64 "$ARCHIVE_MAC_UNSIGNED"
           add_triple "$RESULT_X64" darwin-x86_64 "$ARCHIVE_X64"
           add_triple "$RESULT_LINUX" linux-x86_64 "$ARCHIVE_LINUX"
           add_triple "$RESULT_WIN" windows-x86_64 "$ARCHIVE_WIN"
@@ -1006,7 +1249,8 @@ jobs:
           # that platform's installs. Now any attempted platform that did not
           # succeed fails the manifest.
           for entry in \
-            "darwin-aarch64:$RESULT_ARM64" \
+            "darwin-aarch64 (signed):$RESULT_ARM64" \
+            "darwin-aarch64 (unsigned):$RESULT_MAC_UNSIGNED" \
             "darwin-x86_64:$RESULT_X64" \
             "linux-x86_64:$RESULT_LINUX" \
             "windows-x86_64:$RESULT_WIN"

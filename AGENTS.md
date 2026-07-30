@@ -196,30 +196,64 @@ misconfiguration.
   failing. Use `macos-canary.yml` for an unsigned build; notarization needs
   either Block's #mdx-ios provisioning or a paid Apple Developer ID wired in
   directly.
-- **macOS auto-update** — follows from the above rather than from the updater.
-  There is no signed macOS build to serve, and `macos-canary.yml` passes no
-  `BUZZ_UPDATER_*`, so `build.rs` leaves `buzz_updater_enabled` unset and
-  `lib.rs:339` never registers `tauri_plugin_updater` at all. An unsigned canary
-  cannot self-update because the plugin is not compiled into it.
+- **macOS notarization** — and therefore a Gatekeeper-clean macOS build. See
+  [Desktop auto-update](#desktop-auto-update-linux--windows--works) for what the
+  fork ships instead, and what that costs a user.
 - **Mobile release** — `mobile-release-candidate.yml` is dispatch-only, wants an
   exact `block/buzz` main SHA, and hands off to the private
   `squareup/sprout-releases` Buildkite pipeline.
 
-### Desktop auto-update (Linux + Windows) — works
+### Desktop auto-update — works on all three platforms
 
-Previously listed here as permanently broken. It is not: `assemble-manifest`
+Previously listed here as permanently broken. It was not: `assemble-manifest`
 asserted `-ge 3` platforms, which a fork cannot reach with both macOS jobs
 skipped, so `latest.json` was never published — while every updater archive and
 `.sig` was already sitting in the `buzz-desktop-latest` rolling release. One
 missing file, not a missing feature. The guard now asserts on job results
-instead (see the `release.yml` row above), and `.deb` remains non-updatable by
-Tauri constraint (`release.yml:699`), so Linux auto-update is AppImage only.
+instead (see the `release.yml` row above).
 
 The rest was already fork-correct: `BUZZ_UPDATER_ENDPOINT` points at this repo's
 rolling release, the fork's own throwaway signing keypair produces the `.sig`
 files, `desktop/scripts/generate-oss-latest-json.sh` hardcodes no platform, and
 the app checks on mount and every 6 h
 (`use-updater.ts:23`, `BACKGROUND_UPDATE_CHECK_INTERVAL_MS`).
+
+`.deb` is not auto-updatable by Tauri constraint (`release.yml:699`), so Linux
+auto-update is **AppImage only**.
+
+#### macOS is unsigned, and users must be told what that means
+
+`release-macos-unsigned` supplies `darwin-aarch64`. It mirrors the signed
+`release` job's build and drops only the `block/apple-codesign-action` step, so
+the app is **ad-hoc signed and never notarized**. Three consequences, none of
+which auto-update fixes:
+
+1. **A first install still needs `xattr -dr com.apple.quarantine`.** Auto-update
+   does not remove that step; it stops it repeating, because later updates are
+   written by the app itself and never carry a quarantine attribute.
+2. **The ad-hoc cdhash changes every build**, so macOS may treat each update as a
+   different program for keychain ACL purposes and re-prompt for, or lose, access
+   to the stored identity. The app-data `identity.key` fallback is what carries
+   the identity through — **unverified across an actual update**, and the first
+   thing to check when testing one.
+3. **The trust root is one throwaway key** plus write access to this repo's
+   releases. No second opinion from Apple. Buying an Apple Developer ID and
+   notarizing in this fork's own CI (Tauri supports it natively, no Block
+   infrastructure) removes all three of these at once.
+
+Two jobs can supply `darwin-aarch64`: signed `release` requires `block/buzz`,
+unsigned requires *not* `block/buzz`. Complementary by construction, and
+`assemble-manifest` asserts it rather than assuming — if both ever succeeded, the
+second `write_sig` would overwrite the first and the manifest would pair one
+lane's signature with the other's URL, which no client could verify and no later
+step would catch.
+
+`macos-canary.yml` stays deliberately non-updating (`createUpdaterArtifacts:
+false`, no `BUZZ_UPDATER_*`, so `build.rs` leaves `buzz_updater_enabled` unset and
+`lib.rs:339` never registers the plugin). Canaries are per-commit and have no
+monotonic version for the updater to compare. **A canary build therefore cannot
+update itself into the release channel** — moving from canary to auto-updating
+requires installing a tagged release DMG once, by hand.
 
 Known-still-hardcoded upstream, not yet patched here: `helm-chart.yml` has a
 `GHCR_CHART_REPO` override but `push-gateway-helm-chart.yml` hardcodes
