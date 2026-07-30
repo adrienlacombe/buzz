@@ -88,7 +88,7 @@ place.
 | File | Change | Why |
 |------|--------|-----|
 | `.github/workflows/upstream-sync.md` + `.lock.yml` | new | The daily sync itself |
-| `.github/workflows/macos-canary.yml` | new | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run |
+| `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | Root lock pins `tag=v0.73.1` (`43103c5c`), desktop pins `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit |

@@ -17,10 +17,41 @@ name: macOS Canary (unsigned)
 # The resulting DMG is not notarized. Gatekeeper will refuse it on first open;
 # see the job summary for how to run it locally.
 on:
+  # Every push to main that touches desktop code produces a fresh DMG, so the
+  # newest artifact always corresponds to current main. Before this, the workflow
+  # was dispatch-only and the only artifact that existed was 13 commits stale —
+  # it predated the single-relay allowlist entirely, which is exactly the kind of
+  # silent drift this trigger prevents.
+  #
+  # Free on this repo: it is public, so GitHub-hosted macOS runners are not
+  # billed (the one prior run reported billable MACOS = 0 for ~26 minutes). That
+  # is why the paths below err toward over-triggering — an extra free build is
+  # cheap, a missing build means shipping an artifact that does not match main.
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      # The app bundles sidecars built from crates/ (buzz-acp, buzz-agent,
+      # buzz-dev-mcp, git-credential-nostr, buzz-cli) plus their transitive
+      # deps. Deliberately the whole directory rather than an enumerated list:
+      # a hand-maintained list silently rots as dependencies move, and the
+      # failure mode is a stale DMG rather than a loud error.
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/bundle-sidecars.sh"
+      # Rebuild when the recipe itself changes.
+      - ".github/workflows/macos-canary.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A canary only needs to reflect the newest commit, so supersede an in-flight
+# build rather than queueing 26-minute runs behind each other.
+concurrency:
+  group: macos-canary-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:

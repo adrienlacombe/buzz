@@ -29,10 +29,21 @@ data "aws_iam_policy_document" "github_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # Both subject forms, still exact matches and still pinned to one branch --
+    # no wildcards, so a PR branch or a fork cannot assume the role.
+    #
+    # GitHub issues the ID-based form for this repo; the name-based form is kept
+    # so the deploy survives GitHub changing this in either direction. See
+    # var.github_oidc_sub_prefix_immutable for how to read the live value.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:ref:refs/heads/${var.github_deploy_branch}"]
+      values = compact([
+        "repo:${var.github_repository}:ref:refs/heads/${var.github_deploy_branch}",
+        var.github_oidc_sub_prefix_immutable != ""
+        ? "${var.github_oidc_sub_prefix_immutable}:ref:refs/heads/${var.github_deploy_branch}"
+        : "",
+      ])
     }
   }
 }
@@ -124,6 +135,19 @@ resource "aws_iam_role_policy" "github_actions_iam" {
         Effect   = "Allow"
         Action   = ["iam:GetOpenIDConnectProvider"]
         Resource = data.aws_iam_openid_connect_provider.github.arn
+      },
+      {
+        # The data source resolves a URL to an ARN, which means it calls
+        # ListOpenIDConnectProviders *before* GetOpenIDConnectProvider. Granting
+        # only the Get denies the plan with:
+        #   AccessDenied: ... not authorized to perform iam:ListOpenIDConnectProviders
+        # This action takes no resource-level constraint (it is account-wide by
+        # nature), so "*" is the only valid form. It leaks nothing beyond the
+        # existence and ARNs of the account's OIDC providers.
+        Sid      = "ListOidcProvidersForDataSourceLookup"
+        Effect   = "Allow"
+        Action   = ["iam:ListOpenIDConnectProviders"]
+        Resource = "*"
       },
       {
         # PowerUserAccess already allows s3:*, but Secrets Manager values are
