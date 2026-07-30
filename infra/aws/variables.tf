@@ -113,6 +113,23 @@ variable "owner_pubkey" {
   }
 }
 
+variable "serve_git_web_gui" {
+  description = <<-EOT
+    BUZZ_SERVE_GIT_WEB_GUI. Serves the browser repo UI at /repos for the git
+    repositories the relay hosts. Defaults to false in buzz-relay.
+
+    The web assets already ship in the image (the Dockerfile sets
+    BUZZ_WEB_DIR=/srv/buzz/web), so this only flips the route on — no rebuild.
+    It does not expose anything new: /repos reads the same repositories the git
+    smart-HTTP endpoints already serve under the same auth.
+
+    Note that / keeps returning NIP-11 metadata even when this is true, because
+    the explicit route wins over the SPA fallback. The entry point is /repos.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "require_relay_membership" {
   description = <<-EOT
     BUZZ_REQUIRE_RELAY_MEMBERSHIP. When true, only pubkeys in the relay's

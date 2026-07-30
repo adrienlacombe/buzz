@@ -164,6 +164,10 @@ resource "aws_ecs_task_definition" "relay" {
       # the relay exit at startup.
       { name = "BUZZ_REQUIRE_RELAY_MEMBERSHIP", value = tostring(var.require_relay_membership) },
 
+      # Serves the repo browser SPA at /repos (router.rs:225). Assets already
+      # ship in the image via BUZZ_WEB_DIR, so this only enables the route.
+      { name = "BUZZ_SERVE_GIT_WEB_GUI", value = tostring(var.serve_git_web_gui) },
+
       # Applies migrations/ on startup, so no separate migration task.
       { name = "BUZZ_AUTO_MIGRATE", value = "true" },
 

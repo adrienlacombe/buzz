@@ -43,6 +43,10 @@ owner_pubkey = ""
 # it without one fails at plan time rather than crash-looping the service.
 require_relay_membership = false
 
+# Browser repo UI at https://relay.bitcoinmarkets.app/repos. The web assets are
+# already in the image, so this only enables the route.
+serve_git_web_gui = true
+
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
 
