@@ -627,8 +627,8 @@ jobs:
           SIG_PATH: ${{ steps.artifacts.outputs.sig }}
 
       # FORK-LOCAL PATCH (adrienlacombe/buzz): ported to upstream's staged-artifact
-      # handoff. This lane used to `gh release upload` twice — the DMG straight to
-      # the `v${VERSION}` release and the updater archive to `buzz-desktop-latest`.
+      # handoff. This lane used to push to two releases itself — the DMG straight to
+      # `v${VERSION}` and the updater archive to `buzz-desktop-latest`.
       # #3568 made the per-version release immutable and moved every platform lane
       # to publishing a `desktop-release-*` workflow artifact that
       # assemble-manifest downloads, flattens, verifies, and uploads exactly once.
@@ -636,6 +636,11 @@ jobs:
       # no longer created, and its archive would never land in `staged` — so the
       # fork's only darwin-aarch64 asset would be absent from both the release and
       # latest.json, which is the failure this whole lane exists to prevent.
+      #
+      # Do not name the upload command literally anywhere in this file, not even in
+      # a comment: scripts/test-release-ref-contract.sh counts occurrences of that
+      # string and fails unless there are exactly two, so prose mentioning it
+      # breaks CI while every real call site is still correct.
       - name: Rename DMG to carry -unsigned
         id: unsigned-dmg
         env:
