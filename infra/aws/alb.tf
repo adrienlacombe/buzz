@@ -25,9 +25,18 @@ resource "aws_lb_target_group" "relay" {
 
   # Probe the dedicated health listener (main.rs:1199 binds 0.0.0.0:8080) rather
   # than the traffic port, so a saturated relay still reports honestly.
+  #
+  # Path must be /_readiness, NOT /health. The health router only serves
+  # /_liveness, /_readiness, /_status and /_mesh (router.rs:239); /health exists
+  # only on the main router on port 3000. Probing 8080/health returns 404, which
+  # marks the target unhealthy -- and because an ALB fails open when *every*
+  # target is unhealthy, traffic still flows and the misconfiguration hides
+  # itself. /_readiness is also the semantically correct choice: it pings
+  # Postgres and Redis, and returns 503 once SIGTERM starts a graceful drain, so
+  # the ALB stops sending new connections to a task that is shutting down.
   health_check {
     enabled             = true
-    path                = "/health"
+    path                = "/_readiness"
     port                = tostring(local.health_port)
     protocol            = "HTTP"
     matcher             = "200"

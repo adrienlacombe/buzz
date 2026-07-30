@@ -5,7 +5,7 @@ output "relay_url" {
 
 output "relay_http_url" {
   description = "HTTP origin for NIP-11 metadata, media and git smart HTTP."
-  value       = local.media_base_url
+  value       = local.http_origin
 }
 
 output "alb_dns_name" {
@@ -72,7 +72,7 @@ output "next_steps" {
 
     3. Verify:
 
-         curl -fsS ${local.media_base_url}/health && echo OK
+         curl -fsS ${local.http_origin}/health && echo OK
 
     4. Point the CLI at it:
 

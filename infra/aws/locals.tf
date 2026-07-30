@@ -23,8 +23,13 @@ locals {
   public_scheme = local.enable_dns ? "wss" : "ws"
   http_scheme   = local.enable_dns ? "https" : "http"
 
-  relay_url      = "${local.public_scheme}://${local.public_host}"
-  media_base_url = "${local.http_scheme}://${local.public_host}"
+  relay_url   = "${local.public_scheme}://${local.public_host}"
+  http_origin = "${local.http_scheme}://${local.public_host}"
+
+  # BUZZ_MEDIA_BASE_URL must end with "/media" and must NOT end with a slash --
+  # buzz-media rejects anything else at startup (crates/buzz-media/src/config.rs:103).
+  # Matches the chart's buzz.mediaBaseUrl helper, which builds https://<host>/media.
+  media_base_url = "${local.http_origin}/media"
 
   # Ports, from Dockerfile EXPOSE and deploy/charts/buzz/values.yaml.
   relay_port   = 3000
