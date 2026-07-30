@@ -158,6 +158,12 @@ resource "aws_ecs_task_definition" "relay" {
       { name = "BUZZ_MEDIA_BASE_URL", value = local.media_base_url },
       { name = "RELAY_OWNER_PUBKEY", value = var.owner_pubkey },
 
+      # Restricts the relay to pubkeys in its membership table. The owner is
+      # bootstrapped as a member on startup, so this does not lock the owner out.
+      # Guarded by a variable validation: enabling it without owner_pubkey makes
+      # the relay exit at startup.
+      { name = "BUZZ_REQUIRE_RELAY_MEMBERSHIP", value = tostring(var.require_relay_membership) },
+
       # Applies migrations/ on startup, so no separate migration task.
       { name = "BUZZ_AUTO_MIGRATE", value = "true" },
 

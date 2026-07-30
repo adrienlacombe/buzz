@@ -97,6 +97,15 @@ place.
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
 | `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
+| `desktop/src-tauri/src/relay_allowlist.rs` | new | Single-relay host allowlist. Upstream is multi-community by design; this fork ships a client that reaches only `relay.bitcoinmarkets.app` |
+| `desktop/src-tauri/src/native_websocket.rs` | allowlist call in `open_connection` | The transport is the one path every relay session takes, so a host restriction there cannot be bypassed from the UI |
+| `desktop/src-tauri/src/relay.rs` | release builds default to the allowlisted relay | Without it a release build defaults to `ws://localhost:3000`, which the allowlist then rejects — a client that cannot connect at all |
+| `desktop/src-tauri/src/lib.rs` | `mod relay_allowlist;` | Registers the new module |
+| `mobile/lib/shared/relay/relay_allowlist.dart` | new | Mobile counterpart. Skips enforcement under `flutter test` (`FLUTTER_TEST`) because upstream tests use `wss://relay.example.com`; editing those 13 files would be a large permanent conflict surface |
+| `mobile/lib/shared/relay/relay_socket.dart` | allowlist call in `connect()` | Transport choke point, as on desktop |
+| `mobile/lib/shared/relay/relay_validation.dart` | allowlist call after the shape checks | One hunk covers all four invite/deep-link call sites; placed after the existing checks so malformed input keeps its original error |
+| `mobile/lib/features/pairing/pairing_provider.dart` | allowlist call in `_validateRelayUrl` | QR pairing is a separate entry point from invites |
+| `mobile/lib/shared/relay/relay.dart` | export of `relay_allowlist.dart` | Barrel re-export |
 
 The `RELEASE_REPO` pattern means opting in or out is a **variable** change, not a
 file edit — delete the variable to restore upstream behavior without reverting

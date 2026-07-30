@@ -24,6 +24,8 @@ mod prevent_sleep;
 mod ptt_shortcut;
 mod relay;
 mod relay_admission;
+// FORK-LOCAL PATCH (adrienlacombe/buzz): single-relay host allowlist.
+mod relay_allowlist;
 mod reset;
 mod secret_store;
 mod shutdown;

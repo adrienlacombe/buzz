@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+// FORK-LOCAL PATCH (adrienlacombe/buzz): single-relay host allowlist.
+import 'relay_allowlist.dart';
+
 /// Validates an untrusted relay origin before the mobile app connects to it.
 ///
 /// Production relay URLs must use TLS and may not contain local or otherwise
@@ -22,6 +25,13 @@ void validateInviteRelayUri(
   if (uri.scheme != 'ws' && uri.scheme != 'wss') {
     throw FormatException('Invalid relay URL scheme: ${uri.scheme}');
   }
+
+  // FORK-LOCAL PATCH (adrienlacombe/buzz): reject off-list hosts so an invite or
+  // deep link fails with a clear message at parse time rather than being
+  // accepted and refused later by the transport guard. Placed after the shape
+  // checks above so malformed input keeps its original error message, and one
+  // hunk covers all four call sites (invite_join_provider, deep_link).
+  ensureRelayHostAllowed(uri.host, allowLoopback: allowInsecureLocalhost);
 
   final host = uri.host.toLowerCase();
   final isLocalhost = host == 'localhost' || host.endsWith('.localhost');

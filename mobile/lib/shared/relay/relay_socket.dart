@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:nostr/nostr.dart' as nostr;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+// FORK-LOCAL PATCH (adrienlacombe/buzz): single-relay host allowlist.
+import 'relay_allowlist.dart';
 import 'nostr_models.dart';
 
 /// Low-level websocket connection with NIP-42 authentication.
@@ -63,6 +65,11 @@ class RelaySocket {
     _state = SocketState.connecting;
 
     try {
+      // FORK-LOCAL PATCH (adrienlacombe/buzz): the transport is the one path
+      // every session must take — pairing, invites, deep links, stored
+      // communities and reconnects all arrive here — so the host restriction
+      // cannot be bypassed from the UI. See relay_allowlist.dart.
+      ensureRelayUrlAllowed(_wsUrl);
       _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
       await _channel!.ready;
     } catch (e) {

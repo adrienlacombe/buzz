@@ -219,6 +219,40 @@ deployed image, so a rolled-back deploy reports red instead of passing quietly.
 silently recreating them. This also blocks `terraform destroy` — to tear down
 deliberately, comment out those three `lifecycle` blocks, apply, then destroy.
 
+## Restricting who and what can reach this relay
+
+Two independent controls, in opposite directions. Both are needed; neither
+substitutes for the other.
+
+**Where our clients may go — client-side host allowlist.** The desktop and mobile
+apps ship locked to `relay.bitcoinmarkets.app`
+(`desktop/src-tauri/src/relay_allowlist.rs`,
+`mobile/lib/shared/relay/relay_allowlist.dart`). Enforced at each app's WebSocket
+transport, which every session must pass through, so the community switcher, deep
+links, invites, `BUZZ_RELAY_URL` and stored communities are all covered. Loopback
+still works in debug builds, or local development and every E2E test would break.
+
+This is a **configuration lock, not a security boundary.** It stops the shipped
+app from talking to another relay. It cannot stop someone who rebuilds the client
+or points `buzz-cli` at a different relay.
+
+**Who may use our relay — `require_relay_membership`.** Set it `true` in
+`dev.tfvars` and only pubkeys in the relay's membership table may use the relay;
+NIP-42 authentication alone is not enough. The owner is bootstrapped as a member
+at startup, so enabling it does not lock you out.
+
+It requires `owner_pubkey`. buzz-relay *exits at startup* when membership is
+required and no owner pubkey is set (`crates/buzz-relay/src/main.rs:228`), so a
+variable validation rejects that combination at plan time — otherwise the apply
+succeeds and the service crash-loops. A second validation rejects an
+`owner_pubkey` that is not 64 lowercase hex characters, because the relay only
+warns and ignores a malformed one.
+
+```hcl
+owner_pubkey             = "<your 64-hex Nostr pubkey>"   # npub must be converted
+require_relay_membership = true
+```
+
 ## Not covered
 
 - **Production hardening** — `db_multi_az`, Redis replication + TLS, private

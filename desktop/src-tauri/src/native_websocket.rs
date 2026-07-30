@@ -126,6 +126,13 @@ async fn open_connection(
     url: &str,
     on_message: Channel<serde_json::Value>,
 ) -> Result<Id, String> {
+    // FORK-LOCAL PATCH (adrienlacombe/buzz): this fork ships a single-relay
+    // client. Every relay session — community add, stored communities, deep
+    // links, the read-only observer, reconnects — funnels through here, so this
+    // is the one place a host restriction cannot be bypassed from the UI.
+    // See relay_allowlist.rs for why it is a config lock, not a security control.
+    crate::relay_allowlist::ensure_relay_allowed(url)?;
+
     let connect_cancel = manager.connect_cancel.lock().await.clone();
     let (socket, _) = tokio::select! {
         _ = connect_cancel.cancelled() => return Err("WebSocket connection cancelled".to_string()),

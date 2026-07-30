@@ -5,6 +5,8 @@ export 'media_image.dart';
 export 'media_upload.dart';
 export 'nostr_filters.dart';
 export 'nostr_models.dart';
+// FORK-LOCAL PATCH (adrienlacombe/buzz): single-relay host allowlist.
+export 'relay_allowlist.dart';
 export 'relay_client.dart';
 export 'relay_provider.dart';
 export 'relay_session.dart';

@@ -657,6 +657,12 @@ class PairingNotifier extends Notifier<PairingState> {
     if (!kDebugMode && uri.scheme != 'https') {
       throw const FormatException('Relay URL must use HTTPS');
     }
+
+    // FORK-LOCAL PATCH (adrienlacombe/buzz): QR pairing is a separate entry
+    // point from invites, so it needs its own allowlist check to fail early
+    // with a clear message. The transport guard in RelaySocket.connect() is the
+    // backstop. See shared/relay/relay_allowlist.dart.
+    ensureRelayHostAllowed(uri.host);
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw FormatException('Invalid URL scheme: ${uri.scheme}');
     }

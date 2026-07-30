@@ -26,6 +26,12 @@ fn configured_env_var(name: &str) -> Option<String> {
 pub fn relay_ws_url() -> String {
     configured_env_var("BUZZ_RELAY_URL")
         .or_else(|| option_env!("BUZZ_DESKTOP_BUILD_RELAY_URL").map(str::to_string))
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): in a release build, fall back to
+        // the allowlisted relay instead of loopback. Otherwise the shipped app
+        // defaults to ws://localhost:3000, which the allowlist then rejects,
+        // producing a client that cannot connect at all. Returns None in debug so
+        // local development keeps the loopback default below.
+        .or_else(crate::relay_allowlist::default_relay_url)
         .unwrap_or_else(|| DEFAULT_RELAY_WS_URL.to_string())
 }
 

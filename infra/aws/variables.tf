@@ -103,6 +103,36 @@ variable "owner_pubkey" {
   description = "RELAY_OWNER_PUBKEY — hex Nostr pubkey granted relay-owner rights. Public value, safe in tfvars."
   type        = string
   default     = ""
+
+  validation {
+    # The relay warns and ignores a malformed value (config.rs:580), which then
+    # surfaces as a confusing startup failure when membership is required. Catch
+    # it at plan time instead. npub-encoded keys must be converted to hex first.
+    condition     = var.owner_pubkey == "" || can(regex("^[0-9a-f]{64}$", var.owner_pubkey))
+    error_message = "owner_pubkey must be 64 lowercase hex characters (a 32-byte x-only pubkey), or \"\". Convert an npub to hex first."
+  }
+}
+
+variable "require_relay_membership" {
+  description = <<-EOT
+    BUZZ_REQUIRE_RELAY_MEMBERSHIP. When true, only pubkeys in the relay's
+    membership table may use the relay; NIP-42 authentication alone is not
+    enough. The owner is bootstrapped as a member at startup and can then admit
+    others, so enabling this does not lock you out.
+
+    Complements the client-side host allowlist rather than duplicating it: that
+    restricts where our clients may go, this restricts who may use our relay.
+  EOT
+  type        = bool
+  default     = false
+
+  validation {
+    # buzz-relay refuses to start with membership required and no owner pubkey
+    # (main.rs:228-236). Without this check, enabling membership while
+    # owner_pubkey is empty applies cleanly and then crash-loops the service.
+    condition     = !var.require_relay_membership || trimspace(var.owner_pubkey) != ""
+    error_message = "require_relay_membership = true needs owner_pubkey set: the relay exits at startup without it (main.rs:228). Set owner_pubkey to your 64-hex Nostr pubkey."
+  }
 }
 
 variable "log_level" {

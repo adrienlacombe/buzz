@@ -33,7 +33,15 @@ relay_memory        = 1024 # MiB
 relay_desired_count = 1
 
 # Hex Nostr pubkey (64 chars) granted relay-owner rights. Public value.
+# Required before require_relay_membership can be enabled - the relay exits at
+# startup with membership required and no owner (main.rs:228). Convert an npub
+# to hex first; a plan-time validation rejects anything that is not 64-hex.
 owner_pubkey = ""
+
+# Restricts the relay to pubkeys in its membership table, so NIP-42 auth alone is
+# not enough to use it. Still false because it needs owner_pubkey above; flipping
+# it without one fails at plan time rather than crash-looping the service.
+require_relay_membership = false
 
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
