@@ -36,12 +36,12 @@ relay_desired_count = 1
 # Required before require_relay_membership can be enabled - the relay exits at
 # startup with membership required and no owner (main.rs:228). Convert an npub
 # to hex first; a plan-time validation rejects anything that is not 64-hex.
-owner_pubkey = ""
+owner_pubkey = "8dae5a92916c512029ad1534fcf264e0e2e33ce492acf34588bc6268f7570dd5"
 
 # Restricts the relay to pubkeys in its membership table, so NIP-42 auth alone is
-# not enough to use it. Still false because it needs owner_pubkey above; flipping
-# it without one fails at plan time rather than crash-looping the service.
-require_relay_membership = false
+# not enough to use it. The owner above is bootstrapped as a member at startup and
+# admits everyone else, so this does not lock the owner out.
+require_relay_membership = true
 
 # Browser repo UI at https://relay.bitcoinmarkets.app/repos. The web assets are
 # already in the image, so this only enables the route.

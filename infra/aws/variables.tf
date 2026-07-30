@@ -16,44 +16,8 @@ variable "aws_profile" {
   default     = "alc-tf"
 }
 
-# ── CI/CD ────────────────────────────────────────────────────────────────────
 
-variable "github_repository" {
-  description = "owner/repo allowed to assume the deploy role via OIDC."
-  type        = string
-  default     = "adrienlacombe/buzz"
-}
 
-variable "github_deploy_branch" {
-  description = "Only this branch may assume the deploy role. PR branches cannot deploy."
-  type        = string
-  default     = "main"
-}
-
-variable "github_oidc_sub_prefix_immutable" {
-  description = <<-EOT
-    GitHub's ID-based OIDC subject prefix for this repository, of the form
-    "repo:<owner>@<account_id>/<repo>@<repo_id>".
-
-    GitHub issues subject claims containing numeric IDs rather than names for
-    this repo, so a trust policy written only against the name-based form
-    ("repo:owner/repo:ref:...") is rejected with:
-
-      Not authorized to perform sts:AssumeRoleWithWebIdentity
-
-    That is a silent failure mode -- the claim looks correct in CloudTrail,
-    which renders the same ID-bearing string. Read the live value with:
-
-      gh api repos/<owner>/<repo>/actions/oidc/customization/sub
-
-    IDs rather than names is the safer form: renaming or transferring the repo
-    does not silently carry the trust with it. Both forms are trusted so a change
-    on GitHub's side in either direction cannot break deploys. Set to "" to trust
-    only the name-based form.
-  EOT
-  type        = string
-  default     = "repo:adrienlacombe@6303520/buzz@1317096209"
-}
 
 variable "project_name" {
   description = "Short name prefixed onto every resource."
