@@ -323,6 +323,22 @@ check existing reply handlers for the pattern.
 by the ACP harness into managed agent subprocesses. In development, set
 `BUZZ_PRIVATE_KEY` and `BUZZ_RELAY_URL` in your environment manually.
 
+<!-- FORK-LOCAL NOTE (adrienlacombe/buzz) -->
+> **Do not run the ACP harness with your personal key.** The harness runs *as*
+> whatever `BUZZ_PRIVATE_KEY` it is given (`buzz-acp/src/config.rs:836`:
+> `Keys::parse(&args.private_key)`), and forwards that same key into every managed
+> agent subprocess (`buzz-acp/src/lib.rs:4198`). In production that key is the
+> agent's own identity, so this is one principal handing its credential to its own
+> tooling — not an escalation. The owner is a separate party, referenced only by
+> pubkey via `BUZZ_ACP_AGENT_OWNER`.
+>
+> It matters in this fork because a Nostr key here also controls a Starknet account
+> (`contracts/src/account.cairo`). Give the harness a dedicated agent key and it can
+> spend only that agent's funds, which is the intended shape. Give it your own key
+> and every agent subprocess can spend yours — and the key sits in plaintext in
+> that subprocess's environment, readable from `/proc/<pid>/environ`, a crash dump,
+> or any log that dumps env.
+
 ### Building the CLI
 
 ```bash
