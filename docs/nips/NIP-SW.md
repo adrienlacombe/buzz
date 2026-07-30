@@ -12,8 +12,8 @@ by the Nostr key and carries a **Starknet-side attestation** — a signature
 produced by the account itself over the Nostr pubkey — so the binding is proven
 in both directions rather than merely claimed.
 
-The relay stores and serves bindings. It does not verify them and makes no
-assertion about their validity.
+A conforming relay verifies the attestation on-chain at ingest and rejects
+bindings that fail, so a stored binding is an attested one.
 
 ## Motivation
 
@@ -43,8 +43,9 @@ This NIP does not define custody, transaction construction, signing, session
 keys, account deployment, or payment flows. It does not make Buzz a wallet. It
 carries no private key material and no seed phrases.
 
-It also does not define on-chain verification *by the relay*. See
-[Relay behavior](#relay-behavior).
+It does not remove the client's obligation to re-verify before acting on an
+address. Relay verification raises the floor; it cannot speak for the present.
+See [Relay behavior](#relay-behavior).
 
 ## Terminology
 
@@ -56,7 +57,9 @@ It also does not define on-chain verification *by the relay*. See
 - **attested binding**: a head whose attestation verifies against the named
   account contract at the time of checking.
 - **unattested binding**: a head whose attestation is absent, malformed, or
-  fails verification. An unattested binding is a claim, not a fact.
+  fails verification. An unattested binding is a claim, not a fact. A conforming
+  relay never stores one, but clients still encounter them from non-conforming
+  relays and from stale local caches.
 
 ## Relationship to Other NIPs
 
@@ -134,13 +137,18 @@ multisig, or any custom `__validate__` — the client does not need to know whic
 
 ## Client behavior
 
-A client MUST NOT present a binding as the user's wallet unless it has verified
-the attestation against the named account contract.
+On a conforming relay a stored binding was attested at ingest, so a client need
+not verify merely to distinguish a claim from a fact.
+
+A client MUST nonetheless re-verify before any action whose safety depends on the
+address — sending value, or displaying it as a payment destination. Ingest-time
+attestation is a statement about the past (see
+[Security](#security-considerations)).
 
 A client SHOULD:
 
-- re-verify before any action whose safety depends on the address, rather than
-  trusting a cached result (see [Security](#security-considerations));
+- treat a binding from an unknown or non-conforming relay as unattested until it
+  verifies it itself;
 - display attested and unattested bindings differently, and never silently fall
   back to an unattested one;
 - treat a missing binding as "no wallet", never as an error state.
@@ -150,13 +158,51 @@ p-gate and returns 403.
 
 ## Relay behavior
 
-The relay stores kind:30178 like any other addressable event and applies NIP-01
-replacement. It **does not** verify attestations: doing so requires Starknet RPC
-access, which would add an outbound network dependency and a trust surface to the
-relay for no gain the client cannot achieve itself.
+A conforming relay MUST verify the attestation before storing the event, and MUST
+reject a kind:30178 event whose attestation is absent, malformed, or invalid.
+Verification is a `is_valid_signature` call against the account contract named in
+the payload, on the chain named by the `d` tag.
 
-Consequently, **storage is not endorsement**. Relay acceptance says nothing about
-whether a binding is attested.
+This must happen in the **ingest path**, not in `handle_side_effects()` — side
+effects run after the event is stored, which is too late to reject. See
+`crates/buzz-relay/src/handlers/ingest.rs`.
+
+The relay applies NIP-01 replacement as normal once verification passes.
+
+### Configuration
+
+A relay MUST have an RPC endpoint configured for every chain it accepts bindings
+on. A relay that accepts `SN_MAIN` and `SN_SEPOLIA` needs both. A relay with no
+endpoint for a chain MUST reject bindings for that chain rather than storing them
+unverified.
+
+Because the relay is community-scoped by host, endpoint configuration is
+per-deployment, not per-event. The submitting client cannot name the RPC to use —
+that would let an attacker point verification at an endpoint they control.
+
+### Failure policy
+
+Verification MUST **fail closed**: if the RPC is unreachable, times out, or errors,
+the relay rejects the event. This couples binding-write availability to RPC
+availability, which is a real cost — but failing open silently breaks the single
+invariant that relay-side verification exists to establish. A relay that
+sometimes stores unverified bindings gives consumers a guarantee they cannot rely
+on, which is worse than no guarantee at all. A deployment unwilling to accept
+fail-closed availability should not verify at the relay, and should instead
+document that its clients carry full responsibility.
+
+Verification SHOULD be performed against a finalised state (accepted on L2 or
+better), not pending state.
+
+### What relay verification does and does not buy
+
+It removes the spoofing vector: on a conforming relay, a stored binding was
+attested by the named account. Clients no longer need an RPC endpoint merely to
+distinguish a claim from a fact.
+
+It does **not** make a stored binding presently true. See
+[Security](#security-considerations) — this is a time-of-check/time-of-use gap,
+not an implementation gap, and no amount of ingest-time rigour closes it.
 
 Kind:30178 MUST be excluded from full-text search by adding it to the
 `search_tsv` `CASE WHEN kind IN (…)` exclusion in the schema migration. Wallet
@@ -164,12 +210,23 @@ addresses have no place in message search results.
 
 ## Security considerations
 
-**An attestation proves control at signing time, not now.** Starknet accounts are
-upgradeable and their owners rotatable. A binding attested last year may point at
-an account the user no longer controls. This is the sharpest limitation of the
-scheme and clients MUST NOT paper over it: prefer recent attestations, surface
-`signed_at`, and re-verify rather than caching indefinitely. Deployments wanting
-a hard bound SHOULD adopt a maximum attestation age policy.
+**An attestation proves control at signing time, not now — and relay verification
+does not change this.** Starknet accounts are upgradeable and their owners
+rotatable. A binding the relay verified at ingest may, by the time it is read,
+point at an account the user no longer controls. Ingest-time verification is
+strictly a time-of-check/time-of-use window, and it is the sharpest limitation of
+the scheme.
+
+Clients MUST NOT paper over it: prefer recent attestations, surface `signed_at`,
+and re-verify before value-bearing actions rather than trusting either a cached
+result or the relay's ingest check. Deployments wanting a hard bound SHOULD adopt
+a maximum attestation age policy.
+
+**Relay verification is a trust delegation.** A client trusting "stored implies
+attested" is trusting that relay's operator, its RPC endpoint, and its
+correctness. That is reasonable for a community's own relay and unreasonable for
+an arbitrary one — hence the client requirement above to treat bindings from
+unknown relays as unattested.
 
 **Never reuse the Nostr identity key as the account signer.** Beyond the general
 anti-pattern of coupling a high-volume public signing oracle to custody, in this
@@ -198,3 +255,10 @@ attested binding as still valid after replacement.
 - Whether a companion kind should express *intent to receive* (opt-in to being
   sent value) separately from *proof of control*. They are different claims and
   conflating them may be a mistake.
+- Whether the relay should advertise chains it verifies via NIP-11, so clients
+  can tell "this relay verifies `SN_MAIN`" from "this relay stored something it
+  could not check". Without it, "conforming relay" is not machine-discoverable
+  and the client's trust decision stays manual.
+- Whether re-verification should be pushed rather than polled — a relay already
+  watching an RPC could detect owner rotation on a bound account and emit a
+  signal, rather than every client polling independently.
