@@ -45,6 +45,48 @@ the alternative before building on it: NIP-SW
 ([`docs/nips/NIP-SW.md`](../docs/nips/NIP-SW.md)) gives attested wallet discovery
 with an external wallet holding the funds, at no per-transaction cost.
 
+### Derivation confirmed by the sequencer (no deployment needed)
+
+A `--dry-run` deploy of a throwaway account on mainnet confirmed the address
+derivation, the transaction-hash construction, and on-chain BIP-340 verification
+in one call, without funding or deploying anything.
+
+```
+throwaway pubkey  f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9
+                  (BIP-340 published test vector 0 — a public value, deliberately
+                   not secret, so no key was generated for this)
+derived address   0x0010c66994979a83aa145f3c76a9593e6ee94dd63b97d4ba79cdc29eef8d8528
+chain_id          0x534e5f4d41494e  (SN_MAIN)
+l2_gas_consumed   26,146,934
+overall_fee       923,108,179,789,507,228 Fri  (~0.9231 STRK)
+```
+
+Why estimation proves the derivation rather than merely pricing it:
+
+1. `NostrAccountFactory::is_signer_interactive()` returns `false`, so
+   `starknet-accounts` does **not** pass `SimulationFlagForEstimateFee::SkipValidate`
+   (`factory/mod.rs:548-575`). `__validate_deploy__` really ran.
+2. The `DEPLOY_ACCOUNT` v3 transaction hash includes the contract address
+   (`hasher.update(self.address())`).
+3. Our BIP-340 signature was made over the hash computed from *our* address.
+4. The node independently recomputed the address and the hash, then ran
+   `__validate_deploy__`, which verified that signature.
+5. Validation passed. Had the node derived a different address, the hash would have
+   differed and the signature could not have verified.
+
+So the sequencer agrees with `buzz_core::starknet_account::account_address`. This is
+the independent confirmation the unit tests could not give, since those and
+`starknet-accounts` both route through the same `starknet-core` primitive.
+
+It also proves BIP-340 verification works in the real VM on mainnet — not only in
+`snforge` — and that the transaction-hash construction is right, since a wrong hash
+would fail validation identically.
+
+**Still unproven:** that a deploy transaction lands and the account exists
+afterwards. Given the above, the marginal value of actually deploying is low: it
+would cost ~0.92 STRK plus `sncast`-style padding, funded to an address controlled
+by a publicly-known key.
+
 ### Deriving an account address
 
 ```bash
@@ -56,10 +98,10 @@ buzz wallet address --pubkey <64-hex> \
 The address is a hash of the deployment parameters, so it exists before the
 account does — fund it first, deploy later from its own balance.
 
-**No account has been deployed yet.** Address derivation is therefore still
-unverified against a real deployment: the formula and inputs are tested, but
-nothing has confirmed the sequencer lands at the same address. Do not send funds
-to a derived address until one deploy has proven it.
+**No account has been deployed yet**, but the derivation is confirmed — see
+[above](#derivation-confirmed-by-the-sequencer-no-deployment-needed). The
+sequencer validated a deploy against our derived address, so the formula and
+inputs agree with the chain.
 
 ### Notes from the declare
 
