@@ -16,7 +16,9 @@ permissions:
 jobs:
   build:
     name: Build Windows canary
-    if: github.repository == 'block/buzz'
+    # FORK-LOCAL PATCH (adrienlacombe/buzz): see linux-canary.yml. Needs no
+    # secrets; RELEASE_REPO opts a fork in.
+    if: github.repository == (vars.RELEASE_REPO != '' && vars.RELEASE_REPO || 'block/buzz')
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
