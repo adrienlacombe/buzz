@@ -500,6 +500,13 @@ pub struct AppState {
     pub auth: Arc<AuthService>,
     /// Full-text search service.
     pub search: Arc<SearchService>,
+    /// NIP-SW wallet-binding attestation verifier.
+    ///
+    /// Configured from `BUZZ_STARKNET_RPC_<CHAIN_ID>` environment variables. A
+    /// relay with none set verifies nothing and therefore accepts no bindings —
+    /// the intended default, since storing an unverified binding would break the
+    /// guarantee that a stored binding is an attested one.
+    pub starknet_verifier: Arc<crate::starknet_verify::StarknetVerifier>,
     /// Registry of active client subscriptions.
     pub sub_registry: Arc<SubscriptionRegistry>,
     /// Registry of active WebSocket connections.
@@ -649,6 +656,9 @@ impl AppState {
         let max_connections = config.max_connections;
         let max_concurrent_handlers = config.max_concurrent_handlers;
         let search_arc = Arc::new(search);
+        // Read from env, so no call site needs to thread it through and no
+        // submitted event can influence which endpoint is trusted.
+        let starknet_verifier = Arc::new(crate::starknet_verify::StarknetVerifier::from_env());
 
         let audit_arc = audit.into().map(Arc::new);
         let (audit_tx, mut audit_rx) = mpsc::channel::<buzz_audit::NewAuditEntry>(1000);
@@ -720,6 +730,7 @@ impl AppState {
             pubsub,
             auth: Arc::new(auth),
             search: search_arc,
+            starknet_verifier,
             sub_registry: Arc::new(SubscriptionRegistry::new()),
             conn_manager: Arc::new(ConnectionManager::new()),
             community_connections: Arc::new(CommunityConnectionRegistry::new()),

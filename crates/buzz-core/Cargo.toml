@@ -26,5 +26,7 @@ subtle            = { workspace = true }
 zeroize           = { workspace = true }
 percent-encoding  = "2.3"
 url               = { workspace = true }
+starknet-crypto   = "0.8.1"
+starknet-core     = "0.16.0"
 
 # NO tokio, NO sqlx, NO redis, NO axum — zero I/O dependencies

@@ -93,6 +93,24 @@ pub const KIND_AGENT_PROFILE: u32 = 10100;
 /// `docs/nips/NIP-AE.md` and [`crate::engram`].
 pub const KIND_AGENT_ENGRAM: u32 = 30174;
 
+/// NIP-SW: Starknet wallet binding (parameterized replaceable, self-authored).
+///
+/// Links a Nostr identity to a Starknet account contract, addressed by
+/// `(pubkey, kind, d_tag)` where `d_tag` is the Starknet chain id short string
+/// (e.g. `SN_MAIN`) — one current binding per author per chain under NIP-01
+/// last-write-wins.
+///
+/// The event's own signature proves only that the author *claims* the address,
+/// which is spoofable. The payload therefore carries a Starknet-side
+/// attestation: a signature produced by the account itself over the author's
+/// pubkey. A conforming relay verifies it on-chain at ingest and rejects the
+/// event on failure, so a stored binding is an attested one. See
+/// `docs/nips/NIP-SW.md` and [`crate::wallet_binding`].
+///
+/// This kind never carries private key material. The Nostr identity key must
+/// never be the account's signer — see the spec's security considerations.
+pub const KIND_STARKNET_WALLET_BINDING: u32 = 30178;
+
 /// NIP-ER: Event Reminder (parameterized replaceable, author-only).
 ///
 /// Encrypted, author-only reminder addressed by `(pubkey, kind, d_tag)`. The
@@ -586,6 +604,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PERSONA,
     KIND_TEAM,
     KIND_MANAGED_AGENT,
+    KIND_STARKNET_WALLET_BINDING,
     KIND_REPORT,
     KIND_PRODUCT_FEEDBACK,
     KIND_NIP29_PUT_USER,

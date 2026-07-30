@@ -106,7 +106,6 @@ Content is a JSON object:
   "signer_scheme": "secp256k1-ecdsa", // "stark" | "secp256k1-ecdsa" | "secp256r1"
   "attestation": {
     "scheme": "snip12",
-    "message_hash": "0x1f3c…",
     "signature": ["0x…", "0x…"],
     "signed_at": 1785400000
   }
@@ -117,6 +116,16 @@ Content is a JSON object:
 tag. A client encountering a mismatch MUST treat the binding as unattested.
 
 ## Attestation
+
+The payload deliberately carries **no message hash**. Verifiers derive it; they
+never accept it from the submitter.
+
+This is not a hardening detail — accepting a submitted hash makes the scheme
+forgeable with public data alone. Starknet transaction signatures are on-chain,
+so an attacker can lift any `(tx_hash, signature)` pair from a victim's account
+and publish it as an attestation under their own Nostr identity. The account
+confirms the signature is valid, because it is: over a message that says nothing
+about the binding. Removing the field removes what there was to spoof.
 
 The attested message is SNIP-12 typed data whose fields commit to, at minimum:
 
@@ -130,10 +139,23 @@ testnet binding. Committing to the Nostr pubkey is what makes the binding
 directional — a signature over the address alone would be replayable by anyone
 who observed it.
 
-Verification is a `is_valid_signature(message_hash, signature)` call on the
-account contract per SNIP-6. Because it is the *account* that validates, this
-works uniformly across signer schemes: Stark curve, secp256k1, secp256r1,
-multisig, or any custom `__validate__` — the client does not need to know which.
+Verification is a `is_valid_signature(derived_hash, signature)` call on the
+account contract per SNIP-6, at entry point
+`0x028420862938116cb3bbdbedee07451ccc54d4e9412dbef71142ad1980a30941`
+(`starknet_keccak("is_valid_signature")`). Because it is the *account* that
+validates, this works uniformly across signer schemes: Stark curve, secp256k1,
+secp256r1, multisig, or any custom `__validate__` — the verifier does not need to
+know which.
+
+A return of the `VALID` short string (`0x56414c4944`) means valid. Cairo 0-era
+accounts return `TRUE` (`0x1`) instead and both remain deployed, so accept
+either; anything else, including `0`, an empty return, or a revert, is a
+rejection.
+
+Both signer and verifier build the SNIP-12 document from the same source (see
+`buzz_core::snip12::BindingMessage::typed_data_json`) and hash it with the same
+SNIP-12 implementation, so compatibility does not rest on either side
+hand-rolling type strings.
 
 ## Client behavior
 
