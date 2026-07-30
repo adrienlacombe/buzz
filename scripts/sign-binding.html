@@ -1,0 +1,173 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>NIP-SW binding signer</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  textarea { width: 100%; height: 9rem; font: inherit; }
+  pre { background: #f4f4f5; padding: .75rem; overflow-x: auto; white-space: pre-wrap; }
+  button { font: inherit; padding: .5rem 1rem; margin: .5rem .5rem .5rem 0; cursor: pointer; }
+  .ok { color: #15803d; } .bad { color: #b91c1c; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #18181b; color: #e4e4e7; }
+    pre { background: #27272a; }
+  }
+</style>
+
+<h1>NIP-SW binding signer</h1>
+
+<p>Signs a SNIP-12 typed-data document with an injected Starknet wallet
+(Xverse, Ready/Argent, Braavos). Typed data cannot be pasted into a wallet's
+"sign message" box — that box signs a plain <em>shortstring</em>, which is why a
+645-byte JSON document is rejected as "too long". It has to go through the
+wallet's programmatic signing API, which is what this page does.</p>
+
+<p>Everything runs locally in this page. No network calls, no key material
+leaves the wallet.</p>
+
+<h2>1. Typed data</h2>
+<textarea id="td" spellcheck="false"></textarea>
+
+<h2>2. Sign</h2>
+<button id="connect">Connect wallet</button>
+<button id="sign" disabled>Sign typed data</button>
+<pre id="out">Not connected.</pre>
+
+<script>
+const out = document.getElementById('out');
+const tdEl = document.getElementById('td');
+const signBtn = document.getElementById('sign');
+let wallet = null;
+let connectedAddress = null;
+
+// Prefilled with the document for this binding. Replace if regenerating.
+tdEl.value = JSON.stringify({
+  domain: { chainId: "SN_MAIN", name: "Buzz NIP-SW", revision: "1", version: "1" },
+  message: {
+    chainId: "SN_MAIN",
+    nostrPubkeyHigh: "0x8dae5a92916c512029ad1534fcf264e0",
+    nostrPubkeyLow: "0xe2e33ce492acf34588bc6268f7570dd5",
+    signedAt: 1785419301
+  },
+  primaryType: "NostrWalletBinding",
+  types: {
+    NostrWalletBinding: [
+      { name: "nostrPubkeyHigh", type: "felt" },
+      { name: "nostrPubkeyLow", type: "felt" },
+      { name: "chainId", type: "shortstring" },
+      { name: "signedAt", type: "felt" }
+    ],
+    StarknetDomain: [
+      { name: "name", type: "shortstring" },
+      { name: "version", type: "shortstring" },
+      { name: "chainId", type: "shortstring" },
+      { name: "revision", type: "shortstring" }
+    ]
+  }
+}, null, 2);
+
+// Address of the connected account, however this wallet vintage exposes it.
+function addr0(w) {
+  return w.selectedAddress || (w.account && w.account.address) || null;
+}
+
+function log(msg, cls) {
+  out.textContent = msg;
+  out.className = cls || '';
+}
+
+// Wallets inject under several keys depending on vintage. Prefer an explicit
+// list, then fall back to scanning for anything starknet-shaped.
+function findWallets() {
+  const named = ['starknet_xverse', 'starknet_argentX', 'starknet_ready',
+                 'starknet_braavos', 'starknet'];
+  const found = [];
+  for (const key of named) if (window[key]) found.push([key, window[key]]);
+  for (const key of Object.keys(window)) {
+    if (key.startsWith('starknet_') && !named.includes(key) && window[key]) {
+      found.push([key, window[key]]);
+    }
+  }
+  return found;
+}
+
+document.getElementById('connect').onclick = async () => {
+  const found = findWallets();
+  if (!found.length) {
+    log('No Starknet wallet found on window.\n\n' +
+        'Open this page over http:// (not file://) — some extensions do not\n' +
+        'inject into file:// origins. From the repo root:\n\n' +
+        '  python3 -m http.server 8765\n' +
+        '  open http://localhost:8765/sign-binding.html', 'bad');
+    return;
+  }
+  const lines = found.map(([k]) => '  ' + k).join('\n');
+  try {
+    const [key, w] = found[0];
+    // Older injected API: enable(). Newer wallet API: request().
+    if (typeof w.enable === 'function') {
+      await w.enable();
+    } else if (typeof w.request === 'function') {
+      await w.request({ type: 'wallet_requestAccounts' });
+    }
+    wallet = w;
+    connectedAddress = addr0(w);
+    const addr = addr0(w);
+    signBtn.disabled = false;
+    log('Connected via ' + key + '\naccount: ' + addr +
+        '\n\nDetected wallets:\n' + lines, 'ok');
+  } catch (e) {
+    log('Connect failed: ' + (e && e.message ? e.message : String(e)) +
+        '\n\nDetected wallets:\n' + lines, 'bad');
+  }
+};
+
+signBtn.onclick = async () => {
+  let typedData;
+  try {
+    typedData = JSON.parse(tdEl.value);
+  } catch (e) {
+    log('Typed data is not valid JSON: ' + e.message, 'bad');
+    return;
+  }
+  try {
+    let sig;
+    // Path A: injected starknet.js account (get-starknet v3 era).
+    if (wallet.account && typeof wallet.account.signMessage === 'function') {
+      sig = await wallet.account.signMessage(typedData);
+    // Path B: wallet API RPC (get-starknet v4 / SNIP-29 era).
+    } else if (typeof wallet.request === 'function') {
+      sig = await wallet.request({ type: 'wallet_signTypedData', params: typedData });
+    } else {
+      log('Wallet exposes neither account.signMessage nor request().', 'bad');
+      return;
+    }
+
+    // Signatures come back as an array of felts, or as {r,s}, depending on the
+    // wallet and account type. Normalise to the felt list the CLI wants.
+    let felts;
+    if (Array.isArray(sig)) {
+      felts = sig.map(String);
+    } else if (sig && sig.r !== undefined && sig.s !== undefined) {
+      const hex = (v) => '0x' + BigInt(v).toString(16);
+      felts = [hex(sig.r), hex(sig.s)];
+    } else {
+      felts = [JSON.stringify(sig)];
+    }
+    const norm = felts.map((f) =>
+      /^0x/i.test(f) ? f.toLowerCase() : '0x' + BigInt(f).toString(16));
+
+    const args = norm.map((f) => '--signature ' + f).join(' ');
+    log('Signature felts (' + norm.length + '):\n' +
+        norm.map((f) => '  ' + f).join('\n') +
+        '\n\nPublish with:\n\n' +
+        'buzz wallet publish \\\n' +
+        '  --address ' + (connectedAddress || '<connected-account-address>') + ' \\\n' +
+        '  --chain ' + typedData.domain.chainId + ' \\\n' +
+        '  --signed-at ' + typedData.message.signedAt + ' \\\n' +
+        '  ' + args, 'ok');
+  } catch (e) {
+    log('Signing failed: ' + (e && e.message ? e.message : String(e)), 'bad');
+  }
+};
+</script>

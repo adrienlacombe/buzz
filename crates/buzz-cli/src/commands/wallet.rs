@@ -47,6 +47,7 @@ pub fn cmd_message(
     address: &str,
     chain: &str,
     signed_at: Option<u64>,
+    typed_data_only: bool,
 ) -> Result<(), CliError> {
     let signed_at = match signed_at {
         Some(value) => value,
@@ -76,10 +77,16 @@ pub fn cmd_message(
         "message_hash": message_hash,
         "typed_data": typed_data,
         "next": format!(
-            "sign typed_data with the account, then: buzz wallet publish --address {address} --chain {chain} --signed-at {signed_at} --signature <felt> [--signature <felt>…]"
+            "sign the typed_data object (NOT this whole blob) with the account, then: buzz wallet publish --address {address} --chain {chain} --signed-at {signed_at} --signature <felt> [--signature <felt> ...]"
         ),
     });
-    println!("{}", serde_json::to_string(&output).unwrap_or_default());
+    if typed_data_only {
+        // Just the signable artifact. Wallets reject a document carrying extra
+        // keys, and pasting the full envelope is the obvious mistake to make.
+        println!("{}", serde_json::to_string(&typed_data).unwrap_or_default());
+    } else {
+        println!("{}", serde_json::to_string(&output).unwrap_or_default());
+    }
     Ok(())
 }
 
@@ -172,6 +179,7 @@ pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), 
             chain,
             signed_at,
             pubkey,
+            typed_data_only,
         } => {
             // `run()` short-circuits the --pubkey form before auth; reaching here
             // with it set is harmless, so resolve rather than assume.
@@ -179,7 +187,7 @@ pub async fn dispatch(cmd: crate::WalletCmd, client: &BuzzClient) -> Result<(), 
                 Some(value) => value,
                 None => client.keys().public_key().to_hex(),
             };
-            cmd_message(&pubkey, &address, &chain, signed_at)
+            cmd_message(&pubkey, &address, &chain, signed_at, typed_data_only)
         }
         WalletCmd::Publish {
             address,

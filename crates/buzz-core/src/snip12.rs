@@ -294,29 +294,28 @@ mod tests {
         assert_eq!(reparsed, message().message_hash().expect("hash"));
     }
 
-    /// Wallet-compatibility vector.
+    /// Wallet-compatibility vector — armed against a real signature.
     ///
-    /// The tests above prove the document is well-formed, the hash is
-    /// deterministic, and every field is bound. They cannot prove a wallet
-    /// derives the same hash — though the risk is now low, since both sides use
-    /// `starknet-core`'s SNIP-12 implementation over the identical document from
-    /// [`BindingMessage::typed_data_json`].
+    /// Confirmed end to end on Starknet mainnet: Xverse signed the document
+    /// produced by [`BindingMessage::typed_data_json`] for these inputs, and the
+    /// account at `WALLET_ACCOUNT` returned the `VALID` short string
+    /// (`0x56414c4944`) from `is_valid_signature` when given this hash and that
+    /// signature. A wrong document would have derived a different hash and the
+    /// account would have returned `0x0`, as it does for a bogus signature.
     ///
-    /// To arm this test: print `typed_data_json()` for the values below, sign
-    /// that document with Argent or Braavos, and record the hash the wallet
-    /// reports. A mismatch points at the document in `typed_data_json`, not at
-    /// the hashing.
-    ///
-    /// Until armed, verification still fails closed: a mismatch means real
-    /// attestations never verify, which is a broken feature and not a hole.
+    /// If this test starts failing, the SNIP-12 document changed shape and real
+    /// attestations will stop verifying. Fix `typed_data_json`, not this vector.
     #[test]
-    #[ignore = "needs a real wallet signature; see doc comment"]
     fn matches_wallet_produced_hash() {
-        const WALLET_ACCOUNT: &str = "0xREPLACE_ME";
-        const WALLET_PUBKEY: &str = "REPLACE_ME_64_HEX_CHARS";
-        const WALLET_CHAIN: &str = "SN_SEPOLIA";
-        const WALLET_SIGNED_AT: u64 = 0;
-        const WALLET_REPORTED_HASH: &str = "0xREPLACE_ME";
+        const WALLET_ACCOUNT: &str =
+            "0x052d319b18707dc65efa5f8ce94b7ce4fc27629f976fc27b04e233b819b95b74";
+        const WALLET_PUBKEY: &str =
+            "8dae5a92916c512029ad1534fcf264e0e2e33ce492acf34588bc6268f7570dd5";
+        const WALLET_CHAIN: &str = "SN_MAIN";
+        const WALLET_SIGNED_AT: u64 = 1_785_419_301;
+        /// The hash Xverse signed, verified on-chain via `is_valid_signature`.
+        const WALLET_VERIFIED_HASH: &str =
+            "0x2e873d02efa2768c194f7fe571ce72d601ce5acdd06d64346540fb28e03dfab";
 
         let derived = BindingMessage {
             nostr_pubkey: WALLET_PUBKEY,
@@ -327,6 +326,6 @@ mod tests {
         .message_hash_hex()
         .expect("derive");
 
-        assert_eq!(derived, WALLET_REPORTED_HASH);
+        assert_eq!(derived, WALLET_VERIFIED_HASH);
     }
 }

@@ -754,6 +754,12 @@ pub enum WalletCmd {
         /// only the public key goes into the message.
         #[arg(long)]
         pubkey: Option<String>,
+        /// Print only the SNIP-12 typed_data object, ready to paste into a wallet.
+        ///
+        /// The default output wraps it with the derived hash and signed_at for
+        /// reference; a wallet must receive the bare object.
+        #[arg(long)]
+        typed_data_only: bool,
     },
     /// Publish a wallet binding attested by your Starknet account
     Publish {
@@ -1851,9 +1857,10 @@ async fn run(cli: Cli) -> Result<(), CliError> {
         chain,
         signed_at,
         pubkey: Some(pubkey),
+        typed_data_only,
     }) = &cli.command
     {
-        return commands::wallet::cmd_message(pubkey, address, chain, *signed_at);
+        return commands::wallet::cmd_message(pubkey, address, chain, *signed_at, *typed_data_only);
     }
 
     // Auth: private key is required for all relay operations.
