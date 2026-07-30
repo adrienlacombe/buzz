@@ -152,7 +152,7 @@ own throwaway updater keypair — unrelated to Block's).
 
 ### Code scanning triage
 
-All 11 alerts from the first CodeQL run were in files **byte-identical to
+All 12 alerts from the first CodeQL run were in files **byte-identical to
 upstream** — no fork-local code was implicated — and all are dismissed. Recorded
 here because dismissals key to an alert number: a sync that re-touches these
 files can raise the same finding under a new number, and without this table the
