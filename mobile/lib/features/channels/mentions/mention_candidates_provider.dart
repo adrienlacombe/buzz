@@ -41,17 +41,11 @@ final agentOwnersProvider = FutureProvider<Map<String, String>>((ref) async {
   return owners;
 });
 
-/// Pubkeys currently known to represent agents for rendered mention chips.
+/// Pubkeys currently known to represent agents across the active relay.
 ///
-/// Uses the same three identity sources as mention autocomplete: channel bot
-/// roles, relay agent-directory entries, and verified NIP-OA ownership.
-final mentionAgentPubkeysProvider = Provider.family<Set<String>, String>((
-  ref,
-  channelId,
-) {
-  final members =
-      ref.watch(channelMembersProvider(channelId)).asData?.value ??
-      const <ChannelMember>[];
+/// This is available to message surfaces such as search and activity previews,
+/// which do not have a channel-membership list handy.
+final knownAgentPubkeysProvider = Provider<Set<String>>((ref) {
   final relayAgents =
       ref.watch(agentDirectoryProvider).asData?.value ??
       const <AgentDirectoryEntry>[];
@@ -59,12 +53,27 @@ final mentionAgentPubkeysProvider = Provider.family<Set<String>, String>((
   final userCache = ref.watch(userCacheProvider);
 
   return {
-    for (final member in members)
-      if (member.isBot) member.pubkey.toLowerCase(),
     for (final agent in relayAgents) agent.pubkey.toLowerCase(),
     ...owners.keys.map((pubkey) => pubkey.toLowerCase()),
     for (final profile in userCache.values)
       if (profile.ownerPubkey != null) profile.pubkey.toLowerCase(),
+  };
+});
+
+/// Pubkeys currently known to represent agents for rendered channel mention
+/// chips. This adds channel bot roles to the relay-wide identity sources.
+final mentionAgentPubkeysProvider = Provider.family<Set<String>, String>((
+  ref,
+  channelId,
+) {
+  final members =
+      ref.watch(channelMembersProvider(channelId)).asData?.value ??
+      const <ChannelMember>[];
+
+  return {
+    ...ref.watch(knownAgentPubkeysProvider),
+    for (final member in members)
+      if (member.isBot) member.pubkey.toLowerCase(),
   };
 });
 

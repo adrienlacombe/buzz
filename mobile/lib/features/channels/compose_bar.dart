@@ -34,6 +34,7 @@ import 'mentions/mention_ranking.dart';
 import 'photo_library.dart';
 
 part 'compose_bar/helpers.dart';
+part 'compose_bar/agent_mention_labels.dart';
 part 'compose_bar/markdown_editing_controller.dart';
 part 'compose_bar/suggestions.dart';
 part 'compose_bar/formatting_toolbar.dart';
@@ -229,6 +230,16 @@ class ComposeBar extends HookConsumerWidget {
     // owners so @mention suggestions show names ("managed by …" included).
     final relayAgents = ref.watch(agentDirectoryProvider).asData?.value;
     final agentOwners = ref.watch(agentOwnersProvider).asData?.value;
+    final agentMentionLabels = _agentMentionLabels(
+      candidates: mentionMap.value.values,
+    );
+    final agentMentionLabelsKey = (agentMentionLabels.toList()..sort()).join(
+      '\u0000',
+    );
+    useEffect(() {
+      controller.setAgentMentionNames(agentMentionLabels);
+      return null;
+    }, [controller, agentMentionLabelsKey]);
     useEffect(
       () {
         final memberList = membersAsync.asData?.value ?? <ChannelMember>[];

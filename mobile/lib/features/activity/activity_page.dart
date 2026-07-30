@@ -6,6 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../../shared/relay/relay.dart';
+import '../../shared/mentions/mention_tags.dart';
 import '../../shared/theme/theme.dart';
 import '../../shared/utils/string_utils.dart';
 import '../../shared/widgets/avatar_image.dart';
@@ -19,6 +20,7 @@ import '../channels/channel_detail_page.dart';
 import '../channels/channels_provider.dart';
 import '../channels/dm_channel_labels.dart';
 import '../channels/message_content.dart';
+import '../channels/mentions/mention_candidates_provider.dart';
 import '../channels/read_state/read_state_format.dart';
 import '../channels/read_state/read_state_provider.dart';
 import '../profile/user_cache_provider.dart';
@@ -87,8 +89,16 @@ class ActivityPage extends HookConsumerWidget {
     ];
 
     // Preload sender profiles for visible rows.
-    final pubkeys = visibleItems.map((i) => i.item.pubkey).toSet().toList();
-    ref.read(userCacheProvider.notifier).preload(pubkeys);
+    final preloadPubkeys = {
+      for (final item in visibleItems) item.item.pubkey.toLowerCase(),
+      for (final item in visibleItems)
+        ...mentionedPubkeysFromTags(item.item.tags),
+    }.toList()..sort();
+    final preloadPubkeysKey = preloadPubkeys.join('\u0000');
+    useEffect(() {
+      ref.read(userCacheProvider.notifier).preload(preloadPubkeys);
+      return null;
+    }, [preloadPubkeysKey]);
 
     final unreadVisibleCount = visibleItems.where((i) => !isDone(i)).length;
 

@@ -2269,6 +2269,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Helper Bot'));
       await tester.pumpAndSettle();
+      expect(find.byIcon(LucideIcons.bot), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('composer-agent-mention-chip')),
+        findsOneWidget,
+      );
       await tester.enterText(find.byType(TextField), 'hello @Helper Bot');
       await tester.tap(find.byIcon(LucideIcons.arrowUp));
       await tester.pumpAndSettle();
@@ -2284,6 +2289,63 @@ void main() {
         ['role', 'bot'],
       ]);
     });
+
+    testWidgets(
+      'renders chips only for selected agents outside code and composition',
+      (tester) async {
+        final signer = nostr.Keys.generate();
+        await tester.pumpWidget(
+          _buildComposeBar(
+            uploadService: _testUploadService(signer.nsec),
+            currentPubkey: signer.public,
+            relayAgents: [_testAgent('f' * 64)],
+            channels: [_makeCurrentChannel(), _makeSharedMemberChannel()],
+            onSend:
+                (
+                  content,
+                  mentionPubkeys, {
+                  mediaTags = const <List<String>>[],
+                }) async {},
+          ),
+        );
+
+        await _expandComposer(tester);
+        await tester.enterText(find.byType(TextField), '@Helper Bot');
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('composer-agent-mention-chip')),
+          findsNothing,
+        );
+
+        await tester.enterText(find.byType(TextField), '@hel');
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Helper Bot'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('composer-agent-mention-chip')),
+          findsOneWidget,
+        );
+
+        await tester.enterText(find.byType(TextField), '`@Helper Bot`');
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('composer-agent-mention-chip')),
+          findsNothing,
+        );
+
+        await tester.enterText(find.byType(TextField), '@Helper Bot typing');
+        final textField = tester.widget<TextField>(find.byType(TextField));
+        textField.controller!.value = textField.controller!.value.copyWith(
+          composing: const TextRange(start: 12, end: 18),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('composer-agent-mention-chip')),
+          findsOneWidget,
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+      },
+    );
 
     testWidgets('does not mutate a DM when mentioning a non-member agent', (
       tester,

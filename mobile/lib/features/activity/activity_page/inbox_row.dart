@@ -61,6 +61,16 @@ class _InboxRow extends ConsumerWidget {
     final userCache = ref.watch(userCacheProvider);
     final profile = userCache[item.item.pubkey.toLowerCase()];
     final senderLabel = profile?.displayName ?? shortPubkey(item.item.pubkey);
+    final mentionNames = {
+      for (final pubkey in mentionedPubkeysFromTags(item.item.tags))
+        if (userCache[pubkey]?.displayName?.trim().isNotEmpty == true)
+          pubkey: userCache[pubkey]!.displayName!.trim(),
+    };
+    final knownAgentPubkeys = ref.watch(knownAgentPubkeysProvider);
+    final channelAgentPubkeys = channel == null
+        ? const <String>{}
+        : ref.watch(mentionAgentPubkeysProvider(channel!.id));
+    final agentMentionPubkeys = {...knownAgentPubkeys, ...channelAgentPubkeys};
 
     final isDm = channel?.isDm ?? false;
     final channelName = channel != null && !isDm
@@ -172,6 +182,8 @@ class _InboxRow extends ConsumerWidget {
                   // Message preview.
                   MessageContent(
                     content: item.item.displayContent,
+                    mentionNames: mentionNames,
+                    agentMentionPubkeys: agentMentionPubkeys,
                     tags: item.item.tags,
                     maxLines: 2,
                     baseStyle: activityPreviewTextStyle.copyWith(

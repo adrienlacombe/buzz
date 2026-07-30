@@ -136,6 +136,10 @@ class MessageContent extends HookConsumerWidget {
     final style =
         baseStyle ??
         context.textTheme.bodyMedium?.copyWith(color: context.colors.onSurface);
+    final resolvedMentionNames = mentionNames;
+    final resolvedAgentMentionPubkeys = {
+      ...agentMentionPubkeys.map((pubkey) => pubkey.toLowerCase()),
+    };
     final imetaByUrl = parseImetaTags(tags);
     final trailingGallery = maxLines == null
         ? _extractTrailingImageGallery(content, imetaByUrl)
@@ -145,6 +149,13 @@ class MessageContent extends HookConsumerWidget {
       customEmojiFromTags(tags),
       ref.watch(customEmojiListProvider),
     );
+    final mentionPresentationKey = [
+      for (final entry
+          in (resolvedMentionNames.entries.toList()
+            ..sort((a, b) => a.key.compareTo(b.key))))
+        '${entry.key}\u0000${entry.value}',
+      ...(resolvedAgentMentionPubkeys.toList()..sort()),
+    ].join('\u0001');
 
     final finalContent = useMemoized(() {
       // Convert autolinks and bare URLs to standard markdown links,
@@ -191,7 +202,7 @@ class MessageContent extends HookConsumerWidget {
           mentionBuf.write('`${mentionParts[i]}`');
         } else {
           var segment = mentionParts[i];
-          for (final name in mentionNames.values) {
+          for (final name in resolvedMentionNames.values) {
             if (name.contains(' ')) {
               final normalizedName = _markdownMentionName(name);
               segment = segment.replaceAllMapped(
@@ -212,29 +223,35 @@ class MessageContent extends HookConsumerWidget {
         result = '\u200B$result';
       }
       return result;
-    }, [markdownContent, mentionNames]);
+    }, [markdownContent, resolvedMentionNames]);
 
-    final markdown = GptMarkdown(
-      finalContent,
-      style: style,
-      followLinkColor: false,
-      codeBuilder: (context, name, code, closed) =>
-          _MessageCodeBlock(name: name, code: code),
-      linkBuilder: (context, linkText, url, linkStyle) =>
-          _buildLink(context, ref, linkText, url, linkStyle, style),
-      imageBuilder: (context, imageUrl) =>
-          _buildMedia(context, imageUrl, imetaByUrl[imageUrl]),
-      maxLines: maxLines,
-      inlineComponents: [
-        _MentionMd(
-          mentionNames: mentionNames,
-          agentMentionPubkeys: agentMentionPubkeys,
-          onMentionTap: onMentionTap,
-        ),
-        CustomEmojiMd(customEmoji),
-        _ChannelLinkMd(channelNames: channelNames, onChannelTap: onChannelTap),
-        ...MarkdownComponent.inlineComponents,
-      ],
+    final markdown = KeyedSubtree(
+      key: ValueKey('$finalContent\u0000$mentionPresentationKey'),
+      child: GptMarkdown(
+        finalContent,
+        style: style,
+        followLinkColor: false,
+        codeBuilder: (context, name, code, closed) =>
+            _MessageCodeBlock(name: name, code: code),
+        linkBuilder: (context, linkText, url, linkStyle) =>
+            _buildLink(context, ref, linkText, url, linkStyle, style),
+        imageBuilder: (context, imageUrl) =>
+            _buildMedia(context, imageUrl, imetaByUrl[imageUrl]),
+        maxLines: maxLines,
+        inlineComponents: [
+          _MentionMd(
+            mentionNames: resolvedMentionNames,
+            agentMentionPubkeys: resolvedAgentMentionPubkeys,
+            onMentionTap: onMentionTap,
+          ),
+          CustomEmojiMd(customEmoji),
+          _ChannelLinkMd(
+            channelNames: channelNames,
+            onChannelTap: onChannelTap,
+          ),
+          ...MarkdownComponent.inlineComponents,
+        ],
+      ),
     );
     if (trailingGallery == null) return markdown;
 
