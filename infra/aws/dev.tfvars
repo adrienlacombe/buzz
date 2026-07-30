@@ -36,7 +36,7 @@ relay_desired_count = 1
 # Required before require_relay_membership can be enabled - the relay exits at
 # startup with membership required and no owner (main.rs:228). Convert an npub
 # to hex first; a plan-time validation rejects anything that is not 64-hex.
-owner_pubkey = "8dae5a92916c512029ad1534fcf264e0e2e33ce492acf34588bc6268f7570dd5"
+owner_pubkey = "d29f26f8d3216498c5ded281edb884e33da465a4a4614ffc3bcd92db4983b3e5"
 
 # FALSE on purpose: this relay is public. Anyone may join with their own key, or
 # let Buzz generate one (desktop does this automatically on first run --
