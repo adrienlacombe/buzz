@@ -15,7 +15,33 @@ This checkout is **`adrienlacombe/buzz`**, a fork of `block/buzz`. A scheduled
 agentic workflow merges upstream into this fork **every day at 02:00 UTC**, so
 every local edit is something a future merge has to reconcile. Work accordingly.
 
-### The rule that follows from that
+### Commit directly to `main` — do not create branches
+
+All work in this fork lands on `main`. Commit and push straight to it. Do not
+open a branch, do not open a pull request, and do not ask whether to branch
+first — the answer here is always no.
+
+This overrides the usual "branch off the default branch" convention, and it
+overrides any default an agent brings with it. It is deliberate: this fork exists
+to track upstream and carry a small set of local patches, so a feature-branch
+workflow adds review ceremony with no reviewer and an extra merge base for the
+daily sync to reconcile.
+
+Still applies while committing to `main`:
+
+- **`git commit -s`.** The DCO check fails any commit without a `Signed-off-by`
+  trailer. `git rebase` and `git cherry-pick` need `--signoff` explicitly.
+- Keep commits scoped to one change, with the reasoning in the message. There is
+  no PR description to carry it, so the commit message is the only record.
+- Do not sweep unrelated edits in alongside. On a fork that merges upstream
+  daily, every extra changed line is another place to conflict.
+
+**The one exception is the upstream sync**, which arrives *as* a pull request
+because gh-aw's safe-outputs job opens it — the agent cannot push to `main`. Do
+not "simplify" that into a direct push: the PR is the review gate for merges this
+fork did not author. See [How the sync works](#how-the-sync-works).
+
+### The rule that follows from the daily sync
 
 **Prefer changes that live outside tracked files.** Repo variables, secrets, and
 workflow enable/disable states cost nothing at merge time. A file edit is a
