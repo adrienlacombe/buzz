@@ -1,0 +1,218 @@
+# FORK-LOCAL (adrienlacombe/buzz) — not present in block/buzz.
+#
+# Continuous deployment of the relay to AWS account 618867225791 (eu-west-3).
+# Upstream has no AWS deploy path (it publishes images and a Helm chart, and
+# deploys via squareup/* pipelines), so this file is additive and should never
+# conflict on an upstream sync.
+#
+# Trigger design, and why it is not `on: push`:
+#   The task definition must reference an immutable image tag that actually
+#   exists. docker.yml publishes :sha-<7> on every push to main, so this runs
+#   after that workflow rather than racing it.
+#
+# Why it does NOT gate on workflow_run.conclusion == 'success':
+#   docker.yml builds the relay AND the push gateway. A push-gateway failure
+#   marks the whole run 'failure' while the relay image published perfectly
+#   (observed on run 30544720865: relay manifests succeeded, push gateway
+#   amd64 failed). Gating on the overall conclusion would block good relay
+#   deploys on an unrelated job. Instead this verifies the relay manifest
+#   exists in GHCR and deploys only if it does.
+
+name: Deploy to AWS
+
+on:
+  workflow_run:
+    workflows: ["Docker image"]
+    types: [completed]
+    branches: [main]
+  # Manual re-deploy, e.g. to roll back to an earlier commit's image.
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Full commit SHA to deploy (defaults to current main HEAD)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # required to request the OIDC token for AWS
+  packages: read # required to read the GHCR manifest
+
+concurrency:
+  # Terraform holds an S3 state lock; overlapping runs would fail on it. Never
+  # cancel in progress — killing Terraform mid-apply can strand the lock.
+  group: deploy-aws
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-3
+  TF_DIR: infra/aws
+  ECS_CLUSTER: buzz-dev
+  ECS_SERVICE: relay
+  RELAY_URL: https://relay.bitcoinmarkets.app
+
+jobs:
+  deploy:
+    # Only deploy the fork. A different owner running this would target an AWS
+    # account they do not own.
+    if: github.repository == 'adrienlacombe/buzz'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Resolve the commit being deployed
+        id: commit
+        env:
+          EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.image_sha }}
+        run: |
+          set -euo pipefail
+          sha="${INPUT_SHA:-$EVENT_SHA}"
+          if [ -z "$sha" ]; then
+            echo "::error::Could not determine a commit SHA to deploy"
+            exit 1
+          fi
+          echo "sha=$sha"            >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}"    >> "$GITHUB_OUTPUT"
+          echo "Deploying commit $sha (tag sha-${sha:0:7})"
+
+      - name: Verify the relay image exists in GHCR
+        id: image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT: ${{ steps.commit.outputs.short }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${{ github.repository_owner }}/buzz:sha-${SHORT}"
+
+          # GHCR needs a pull-scoped token even for public images.
+          token=$(curl -fsSL -u "${{ github.actor }}:${GH_TOKEN}" \
+            "https://ghcr.io/token?service=ghcr.io&scope=repository:${{ github.repository_owner }}/buzz:pull" \
+            | jq -r .token)
+
+          # Accept both the OCI index and the older Docker manifest list, since
+          # docker.yml stitches a multi-arch manifest.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${token}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+            "https://ghcr.io/v2/${{ github.repository_owner }}/buzz/manifests/sha-${SHORT}")
+
+          if [ "$code" != "200" ]; then
+            echo "::notice::No relay image at ${image} (HTTP ${code}). The image build for this commit did not publish; nothing to deploy."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "found=true"       >> "$GITHUB_OUTPUT"
+          echo "ref=${image}"     >> "$GITHUB_OUTPUT"
+          echo "Found ${image}"
+
+      - name: Check out the commit being deployed
+        if: steps.image.outputs.found == 'true'
+        uses: actions/checkout@v4
+        with:
+          # Deploy the Terraform that shipped with this commit, not main's HEAD.
+          ref: ${{ steps.commit.outputs.sha }}
+          persist-credentials: false
+
+      - name: Configure AWS credentials via OIDC
+        if: steps.image.outputs.found == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::618867225791:role/buzz-dev-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+          # No access keys anywhere: this exchanges the OIDC token for
+          # short-lived STS credentials.
+
+      - uses: hashicorp/setup-terraform@v3
+        if: steps.image.outputs.found == 'true'
+        with:
+          terraform_version: 1.15.5
+          terraform_wrapper: false
+
+      - name: Terraform init
+        if: steps.image.outputs.found == 'true'
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false -no-color
+
+      - name: Terraform plan
+        if: steps.image.outputs.found == 'true'
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # aws_profile must be empty here: OIDC puts credentials in the
+          # environment, and naming the local 'alc-tf' profile would fail.
+          terraform plan -input=false -no-color -lock-timeout=5m \
+            -var-file=dev.tfvars \
+            -var "aws_profile=" \
+            -var "relay_image=${IMAGE}" \
+            -out=tfplan
+
+      - name: Show what will change
+        if: steps.image.outputs.found == 'true'
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          {
+            echo '### Terraform plan'
+            echo '```'
+            terraform show -no-color tfplan | grep -E '^  # |^Plan:|^No changes' || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform apply
+        if: steps.image.outputs.found == 'true'
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform apply -input=false -no-color -lock-timeout=5m tfplan
+
+      # ECS has a deployment circuit breaker with rollback enabled (see ecs.tf),
+      # so a failing task definition is reverted by ECS itself. This waits for
+      # that to settle and fails the run if it does not stabilise, so a rolled-back
+      # deploy shows up red rather than silently passing.
+      - name: Wait for the ECS service to stabilise
+        if: steps.image.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          if ! aws ecs wait services-stable \
+                --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+                --region "$AWS_REGION"; then
+            echo "::error::Service did not stabilise. Recent events:"
+            aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+              --region "$AWS_REGION" --query 'services[0].events[0:8].message' --output text
+            exit 1
+          fi
+
+      - name: Verify the deployed image and health endpoint
+        if: steps.image.outputs.found == 'true'
+        env:
+          EXPECTED: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+
+          # Confirm the running task definition actually references the image we
+          # deployed. If the circuit breaker rolled back, this will not match.
+          td=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+                --region "$AWS_REGION" --query 'services[0].taskDefinition' --output text)
+          running=$(aws ecs describe-task-definition --task-definition "$td" \
+                --region "$AWS_REGION" --query 'taskDefinition.containerDefinitions[0].image' --output text)
+          echo "running image: $running"
+          if [ "$running" != "$EXPECTED" ]; then
+            echo "::error::Running image ($running) is not the deployed image ($EXPECTED) - ECS likely rolled back."
+            exit 1
+          fi
+
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 10 "${RELAY_URL}/health" >/dev/null 2>&1; then
+              echo "health OK after ${i} attempt(s)"
+              echo "Deployed \`$running\` — health OK" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+
+          echo "::error::${RELAY_URL}/health did not respond after ~5 minutes"
+          aws logs tail /ecs/"$ECS_CLUSTER"/relay --since 10m --region "$AWS_REGION" | tail -40
+          exit 1

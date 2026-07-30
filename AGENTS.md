@@ -69,10 +69,16 @@ place.
 | `docker.yml` | `PUSH_GATEWAY_IMAGE` override; owner-correct attestation hint | Push-gateway image was hardcoded to `ghcr.io/block/buzz-push-gateway` in nine places, so `GHCR_IMAGE` could not retarget it |
 | `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository` | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates |
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
+| `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
+| `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
 
 The `RELEASE_REPO` pattern means opting in or out is a **variable** change, not a
 file edit — delete the variable to restore upstream behavior without reverting
 any commit.
+
+`infra/aws/` is additive-only by construction — it edits no upstream file. If an
+upstream sync ever conflicts there, something has gone wrong; do not resolve it by
+reformatting the Terraform.
 
 ### Repo settings (no file changes — preferred mechanism)
 

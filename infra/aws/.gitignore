@@ -1,0 +1,23 @@
+# Terraform state can contain the RDS password and the relay's S3 secret key in
+# plaintext. It belongs in the encrypted S3 backend, never in git.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl.bak
+
+# Plan files embed the same secrets as state.
+*.tfplan
+plan.out
+
+# Real variable values and generated backend config.
+terraform.tfvars
+*.auto.tfvars
+backend.hcl
+
+crash.log
+crash.*.log
+
+# Apply/plan transcripts. Terraform redacts secret values in output, but these
+# still name every resource and endpoint - no reason to commit them.
+*.log
