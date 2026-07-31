@@ -560,12 +560,28 @@ jobs:
           path: ${{ github.workspace }}/.cache/mesh-llama
           key: mesh-llama-${{ runner.os }}-metal-${{ steps.mesh_rev.outputs.rev }}
 
-      # --no-sign skips Apple signing; the linker still applies an ad-hoc
-      # signature, which is what lets the result run on Apple Silicon at all.
-      # The Tauri signing key here signs the *updater archive*, which is a
-      # separate trust chain from Apple's and the only one this lane has.
+      # FORK-LOCAL PATCH (adrienlacombe/buzz): no `--no-sign` here, unlike the two
+      # signed macOS lanes above and macos-canary.yml.
+      #
+      # Tauri 2's `--no-sign` skips Apple signing *and* updater signing — it ends
+      # the build with `Updater signing is skipped due to --no-sign flag`, so the
+      # .app.tar.gz is produced without its .sig and the next step fails with
+      # "Updater archive or signature not found". That is exactly how
+      # desktop-v0.0.0-forktest.4 failed on this lane's first ever run.
+      #
+      # The updater signature comes from this fork's own throwaway Tauri keypair
+      # and has nothing to do with Apple's trust chain, so there is no reason to
+      # suppress it. The signed lanes can afford the flag because
+      # block/apple-codesign-action re-signs afterwards; this lane has no such
+      # step, and macos-canary.yml sets createUpdaterArtifacts: false so it never
+      # wants a .sig at all.
+      #
+      # Dropping the flag does not reintroduce Apple signing: no signingIdentity is
+      # configured anywhere and the runners carry no Apple identity, so Tauri skips
+      # codesigning on its own and the binary keeps the ad-hoc linker signature
+      # that lets it run on Apple Silicon.
       - name: Build unsigned Tauri app
-        run: cd desktop && pnpm tauri build --verbose --no-sign --features mesh-llm --config src-tauri/tauri.release.conf.json
+        run: cd desktop && pnpm tauri build --verbose --features mesh-llm --config src-tauri/tauri.release.conf.json
         env:
           BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
           BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
@@ -598,7 +614,11 @@ jobs:
           ARCHIVE=$(find "$BUNDLE_DIR/macos" -name '*.tar.gz' ! -name '*.sig' -type f | head -1)
           SIG="${ARCHIVE}.sig"
           if [[ -z "$ARCHIVE" || ! -f "$SIG" ]]; then
-            echo "::error::Updater archive or signature not found in $BUNDLE_DIR/macos — is createUpdaterArtifacts set and TAURI_SIGNING_PRIVATE_KEY present?"
+            # The archive existing without its .sig means the build was told not to
+            # sign, not that the key is missing — check for `--no-sign` on the
+            # build step first, then createUpdaterArtifacts and the key.
+            [[ -n "$ARCHIVE" && ! -f "$SIG" ]] && echo "::error::Found $ARCHIVE but no $SIG — the build almost certainly ran with --no-sign, which skips updater signing as well as Apple signing"
+            echo "::error::Updater archive or signature not found in $BUNDLE_DIR/macos — check for --no-sign on the build step, then createUpdaterArtifacts and TAURI_SIGNING_PRIVATE_KEY"
             exit 1
           fi
           echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
