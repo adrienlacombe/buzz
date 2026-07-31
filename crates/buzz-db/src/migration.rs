@@ -561,7 +561,11 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 26);
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 26 migrations; this
+        // fork adds 0027 (NIP-SW wallet-binding search exclusion) and 0028 (its
+        // 30178 -> 30900 kind move), so the count is 28 here. 0027 landed without
+        // bumping this, which left the assertion failing on main.
+        assert_eq!(migrations.len(), 28);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]

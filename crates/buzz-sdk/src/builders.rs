@@ -1838,7 +1838,7 @@ pub fn build_unarchive_identity_request(
     )
 }
 
-/// NIP-SW: build a Starknet wallet binding (`kind:30178`, addressable by
+/// NIP-SW: build a Starknet wallet binding (`kind:30900`, addressable by
 /// `(pubkey, kind, chain_id)`). Replaces the caller's prior binding for that
 /// chain under NIP-01 last-write-wins.
 ///

@@ -484,7 +484,7 @@ buzz notes rm --name does-not-exist   # exits non-zero
 
 ---
 
-### 6.13 Wallet Bindings (NIP-SW Starknet, kind:30178)
+### 6.13 Wallet Bindings (NIP-SW Starknet, kind:30900)
 
 `wallet message` is local-only — no relay, no chain. The other three need a
 relay, and `publish` additionally needs the relay to have
@@ -518,7 +518,7 @@ buzz wallet lookup --address 0x04a5... --chain SN_SEPOLIA
 Worth checking explicitly:
 
 - Republishing for the same chain **replaces** (NIP-33 LWW keyed by
-  `(pubkey, 30178, chain_id)`); a second chain coexists rather than replacing.
+  `(pubkey, 30900, chain_id)`); a second chain coexists rather than replacing.
 - A wrong `--signed-at` is rejected by the relay, not accepted silently.
 - `wallet lookup` may legitimately return **several** bindings from different
   pubkeys for one address, and that is not a bug — on a conforming relay each was

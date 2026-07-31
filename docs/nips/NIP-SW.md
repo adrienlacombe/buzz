@@ -7,7 +7,7 @@ Starknet Wallet Binding
 `draft` `optional` `client`
 
 This NIP defines a verifiable, chain-scoped link between a Nostr identity and a
-Starknet account contract as `kind:30178` addressable events. The event is signed
+Starknet account contract as `kind:30900` addressable events. The event is signed
 by the Nostr key and carries a **Starknet-side attestation** — a signature
 produced by the account itself over the Nostr pubkey — so the binding is proven
 in both directions rather than merely claimed.
@@ -49,7 +49,7 @@ See [Relay behavior](#relay-behavior).
 
 ## Terminology
 
-- **binding**: the addressable coordinate `(pubkey, 30178, d)` where `d` is a
+- **binding**: the addressable coordinate `(pubkey, 30900, d)` where `d` is a
   Starknet chain id.
 - **head**: the winning latest event for a binding under NIP-01 replacement.
 - **attestation**: a Starknet signature over a SNIP-12 typed-data message that
@@ -75,7 +75,7 @@ the spending key outside the client.
 
 ## Event
 
-`kind:30178` is addressable, keyed by `(pubkey, kind, d)`.
+`kind:30900` is addressable, keyed by `(pubkey, kind, d)`.
 
 The `d` tag MUST be the Starknet chain id as its ASCII short-string form — for
 example `SN_MAIN` or `SN_SEPOLIA`. Chain-scoping the `d` tag gives each user one
@@ -92,7 +92,7 @@ Required tags:
 ```
 
 The `i` tag carries `starknet:<chain_id>:<address>`, enabling reverse lookup
-(address → npub) via `{"kinds":[30178],"#i":["starknet:SN_MAIN:0x04a5…"]}`. Its
+(address → npub) via `{"kinds":[30900],"#i":["starknet:SN_MAIN:0x04a5…"]}`. Its
 third element MAY be the attestation message hash, for correlation without
 parsing content.
 
@@ -181,7 +181,7 @@ p-gate and returns 403.
 ## Relay behavior
 
 A conforming relay MUST verify the attestation before storing the event, and MUST
-reject a kind:30178 event whose attestation is absent, malformed, or invalid.
+reject a kind:30900 event whose attestation is absent, malformed, or invalid.
 Verification is a `is_valid_signature` call against the account contract named in
 the payload, on the chain named by the `d` tag.
 
@@ -226,7 +226,7 @@ It does **not** make a stored binding presently true. See
 [Security](#security-considerations) — this is a time-of-check/time-of-use gap,
 not an implementation gap, and no amount of ingest-time rigour closes it.
 
-Kind:30178 MUST be excluded from full-text search by adding it to the
+Kind:30900 MUST be excluded from full-text search by adding it to the
 `search_tsv` `CASE WHEN kind IN (…)` exclusion in the schema migration. Wallet
 addresses have no place in message search results.
 
