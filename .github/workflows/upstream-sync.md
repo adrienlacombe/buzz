@@ -1,8 +1,12 @@
 ---
 on:
   schedule:
-    # 02:00 UTC every day
-    - cron: "0 2 * * *"
+    # 05:00 UTC, deliberately far behind upstream-sync-merge.yml's 01:30 slot.
+    # GitHub delays scheduled runs under load: on 2026-07-31 the 01:30 job did
+    # not start until 02:17, i.e. after the 02:00 slot this used to hold, so the
+    # deterministic stage no longer ran first and the ordering the two stages
+    # depend on was inverted. 3.5 hours of slack rather than 30 minutes.
+    - cron: "0 5 * * *"
   workflow_dispatch:
 
 engine: copilot
@@ -158,6 +162,14 @@ If the merge stops with conflicts:
 - Do not reformat, refactor, upgrade dependencies, or "fix" anything unrelated
   to the conflict. The diff must contain nothing but upstream's changes plus
   your conflict resolutions.
+- **If upstream claims an event-kind integer this fork already uses**, upstream
+  keeps the number and the fork's constant moves into the reserved
+  `30900`–`30999` block. Keep both constants and both behaviours — a collision
+  here is two unrelated schemas on one integer, so it is never resolved by
+  picking a side. Update every reference to the moved constant, including the
+  `is_parameterized_replaceable` assertion, `SHARED_GATED_KINDS`, the SDK
+  builder, the CLI, and docs. See *Fork-local event kinds* in `AGENTS.md`; this
+  is a settled rule, so do not escalate it as ambiguous.
 - Finish with `git add <files>` and `git commit --no-edit`.
 
 **If you cannot resolve a conflict with confidence** — the two sides make

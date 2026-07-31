@@ -70,11 +70,24 @@ then runs `git merge --no-ff upstream/main`. Clean merges are pushed by the runn
 and opened as an `[upstream-sync]` PR. Conflicts abort and hand off to 02:00. This
 is the common path and it costs no AI credits.
 
-**02:00 UTC — `.github/workflows/upstream-sync.md`, Copilot via gh-aw.** Stops
+**05:00 UTC — `.github/workflows/upstream-sync.md`, Copilot via gh-aw.** Stops
 immediately if a pushed sync branch already contains `upstream/main`, so it cannot
 stack a second PR on the 01:30 one. Otherwise it merges, resolves conflicts, and
 writes the *Conflicts* and *Needs a human look* sections. It runs with
 `contents: read` and never pushes.
+
+**Why 05:00 and not 02:00:** GitHub delays scheduled runs under load. On
+2026-07-31 the 01:30 job did not start until 02:17 — after the 02:00 slot this
+stage used to hold — so the deterministic stage no longer ran first and the
+ordering both stages depend on was inverted. A 30-minute gap is not a guarantee;
+3.5 hours is the margin.
+
+**The handoff only works if this workflow is enabled.** It was
+`disabled_manually` on 2026-07-31, so when the 01:30 stage hit conflicts and
+handed off, nothing picked them up: no PR, no issue, and the fork sat 17 commits
+behind in silence. Both stages reported success, because a conflicted handoff is
+success for the first stage. `gh workflow list --all` is the only place that
+state is visible — check it if syncs go quiet.
 
 **Only the 01:30 stage preserves upstream history**, and that distinction is the
 whole reason it exists. gh-aw moves the agent's work into its PR job as a git
@@ -166,6 +179,36 @@ conflict surface for code that never executes. They would break if ever enabled.
 upstream sync ever conflicts there, something has gone wrong; do not resolve it by
 reformatting the Terraform.
 
+### Fork-local event kinds
+
+**Kinds `30900`–`30999` are reserved for this fork.** Every fork-only event kind
+belongs in that block. Upstream's parameterized-replaceable kinds cluster at
+`30174`–`30178` and grow upward, so anything the fork places near them will be
+claimed sooner or later.
+
+That is not hypothetical. The fork put NIP-SW's Starknet wallet binding at
+`30178`; upstream then shipped `KIND_TEAM_CATALOG = 30178` (#3358), and the
+resulting collision was two unrelated schemas on one integer in the same crate —
+`ingest_event_inner` would run both the on-chain attestation verifier and
+`validate_team_catalog_envelope` on every such event, so one always rejects the
+other's traffic. Text merging cannot fix that; the number has to move.
+
+**The rule when upstream claims a kind the fork already uses:** upstream keeps the
+integer, the fork's constant moves into the reserved block. Keep both constants and
+both behaviours — never resolve a kind collision by picking a side. `30178` stays
+upstream's; the wallet binding is `30900`.
+
+Moving a kind is a **wire-format change**: events already stored under the old
+integer are not rewritten, and clients pinned to it stop matching. Check for
+existing events before moving one that has been live.
+
+When adding a fork-local kind, the checklist is the constant in
+`buzz-core/src/kind.rs`, its `is_parameterized_replaceable` assertion,
+`SHARED_GATED_KINDS` if it is shareable, the relay's `required_scope_for_kind` and
+ingest branch, the SDK builder in `buzz-sdk/src/builders.rs`, any `buzz-cli`
+subcommand, and `desktop/src/shared/constants/kinds.ts` plus
+`mobile/lib/shared/relay/nostr_models.dart`, which must stay in sync.
+
 ### Repo settings (no file changes — preferred mechanism)
 
 | Setting | Value | Why |
@@ -177,6 +220,7 @@ reformatting the Terraform.
 | `Auto-tag on Release PR Merge` | **disabled** | Fires on every merged same-repo PR. A sync PR carrying a `deploy/charts/buzz/Chart.yaml` version bump hits its default lane and tries to mint a token from the `BUZZ_RELEASE_TAGGER` GitHub App, which does not exist here |
 | `sprig-latest` release | **created manually** | `sprig.yml`'s rolling lane calls `gh release edit sprig-latest` with no create-if-missing fallback. Forks inherit no releases, so it failed on every push to `main` until the release existed |
 | Code scanning | **default setup**, weekly, default query suite | CodeQL over `actions`, `javascript-typescript`, `python`, `rust`. Upstream ships no `codeql.yml`, so this is a setting rather than a workflow file — nothing to conflict. Triage below |
+| `Sync this fork with upstream` workflow | **must stay enabled** | Found `disabled_manually` on 2026-07-31. It is the conflict-resolution half of the sync, so while disabled every conflicted merge was silently dropped — the 01:30 stage aborts and hands off, and nothing was listening. Neither run goes red, so this is invisible except via `gh workflow list --all`. Re-enable with `gh workflow enable "Sync this fork with upstream"` |
 
 Secrets set here: `COPILOT_GITHUB_TOKEN` (sync engine),
 `TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` and `BUZZ_UPDATER_PUBLIC_KEY` (fork's
