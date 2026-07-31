@@ -2,15 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- FORK-LOCAL PATCH (adrienlacombe/buzz): every user-visible name here is
+         BitcoinMarkets, matching productName in tauri.conf.json.
+
+         tauri.conf.json's productName only names the .app directory, the DMG and
+         the mounted volume. These keys are what macOS actually shows: Finder uses
+         CFBundleDisplayName, the menu bar beside the Apple logo uses
+         CFBundleName, and the three usage descriptions are quoted verbatim in the
+         system permission prompts. Left unpatched, the bundle was
+         BitcoinMarkets.app while the app called itself Buzz everywhere a user
+         could see it, and asked for the microphone as "Buzz".
+
+         CFBundleIdentifier is deliberately NOT renamed — see AGENTS.md. Nor is
+         the executable name (buzz-desktop): it is the Cargo binary, not a
+         user-visible string.
+
+         This file is otherwise byte-identical to upstream, so a sync that adds a
+         permission string will conflict here. Resolution: take upstream's new key
+         and rewrite its Buzz to BitcoinMarkets. -->
     <key>CFBundleDisplayName</key>
-    <string>Buzz</string>
+    <string>BitcoinMarkets</string>
     <key>CFBundleName</key>
-    <string>Buzz</string>
+    <string>BitcoinMarkets</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Buzz needs microphone access for voice huddles.</string>
+    <string>BitcoinMarkets needs microphone access for voice huddles.</string>
     <key>NSCameraUsageDescription</key>
-    <string>Buzz needs camera access to record animated avatars.</string>
+    <string>BitcoinMarkets needs camera access to record animated avatars.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Buzz uses your local network for optional Share Compute and local relay connections. Remote messaging does not require this access.</string>
+    <string>BitcoinMarkets uses your local network for optional Share Compute and local relay connections. Remote messaging does not require this access.</string>
 </dict>
 </plist>

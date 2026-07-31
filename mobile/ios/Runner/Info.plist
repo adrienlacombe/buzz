@@ -14,8 +14,13 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<!-- FORK-LOCAL PATCH (adrienlacombe/buzz): BitcoinMarkets, matching
+	     APP_DISPLAY_NAME in the xcconfigs. Those set CFBundleDisplayName, which
+	     drives the home-screen label; CFBundleName is the shorter name iOS falls
+	     back to in Settings and elsewhere, and it was still Buzz. See also the
+	     usage descriptions below. CFBundleIdentifier is deliberately untouched. -->
 	<key>CFBundleName</key>
-	<string>Buzz</string>
+	<string>BitcoinMarkets</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -43,12 +48,16 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- FORK-LOCAL PATCH (adrienlacombe/buzz): iOS quotes these strings verbatim
+	     in the system permission prompts, so they are the most visible copy in the
+	     app. A sync that adds a permission key will conflict here: take upstream's
+	     new key and rewrite its Buzz to BitcoinMarkets. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Buzz needs camera access so you can take photos to attach to messages and scan QR codes for device pairing.</string>
+	<string>BitcoinMarkets needs camera access so you can take photos to attach to messages and scan QR codes for device pairing.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Buzz needs photo library access so you can attach images to messages.</string>
+	<string>BitcoinMarkets needs photo library access so you can attach images to messages.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Buzz needs permission to save images to your photo library.</string>
+	<string>BitcoinMarkets needs permission to save images to your photo library.</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
