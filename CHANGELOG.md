@@ -1351,3 +1351,19 @@
 - Tagged as a prerelease on purpose. `release.yml` skips the rolling `latest.json`
   upload for any version containing `-`, so this publishes a versioned release
   without offering an auto-update to installed clients.
+- **Did not publish.** `release-macos-unsigned` built everything and then failed at
+  "Locate build artifacts": Tauri 2's `--no-sign` skips updater signing as well as
+  Apple signing, so the `.app.tar.gz` had no `.sig`. Fixed in `5a68165ee`; see
+  `v0.0.0-forktest.5`.
+
+## v0.0.0-forktest.5
+
+- Re-cut of `v0.0.0-forktest.4` with `--no-sign` dropped from the unsigned macOS
+  lane, so the updater archive is signed with the fork's own Tauri keypair and the
+  lane can complete.
+- Still a prerelease, so the rolling `latest.json` is untouched and no installed
+  client is offered an update.
+- What this cut is actually testing, none of which has ever run to completion:
+  `release-macos-unsigned` end to end, the `desktop-release-*` artifact handoff it
+  was ported to for upstream's immutable-release flow (#3568), and the fork-local
+  `assemble-manifest` gate that accepts a skipped signed-macOS lane.
