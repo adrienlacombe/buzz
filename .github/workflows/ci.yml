@@ -1039,13 +1039,19 @@ jobs:
       #
       # FORK-LOCAL PATCH (adrienlacombe/buzz): read desktop/src-tauri/Cargo.lock,
       # not the root one. Desktop is excluded from the root workspace, so the two
-      # locks pin mesh-llm independently — root is at tag=v0.73.1 (43103c5c) while
-      # desktop is at rev=f455d493. The build step below fetches the *desktop*
-      # manifest, so resolving the rev from the root lock makes it search for a
-      # checkout that was never fetched:
+      # locks pin mesh-llm independently and can name different revs — they did
+      # when this patch landed (root tag=v0.73.1 43103c5c, desktop rev=f455d493).
+      # The build step below fetches the *desktop* manifest, so resolving the rev
+      # from the root lock makes it search for a checkout never fetched:
       #   ::error::mesh-llm checkout for 43103c5 not found after cargo fetch
       # Upstream never trips this because the step is skipped on a cache hit and
       # their cache is warm; a fresh fork has no cache, so it runs and fails.
+      #
+      # As of the 2026-07-31 sync both locks happen to pin tag=v0.74.0 (e60b2fe4),
+      # so this resolves the same rev either way and is temporarily a no-op. Keep
+      # it: the locks are still independent, so the next bump moving one and not
+      # the other re-breaks the root-lock version. The convergence is a
+      # coincidence, not upstream adopting the fix.
       # Expect this hunk to conflict on upstream syncs that touch this block.
       - name: Resolve mesh-llm rev
         id: mesh_rev
