@@ -1328,3 +1328,26 @@
 ## v0.3.0
 
 - Initial release on the automated pipeline. Unifies OSS and internal version numbering above both v0.0.21 (OSS) and v0.2.38 (internal).
+
+<!-- FORK-LOCAL PATCH (adrienlacombe/buzz): fork-test release notes live at the
+     BOTTOM of this file, deliberately. release.yml's "Create or verify versioned
+     draft" step greps for `^## v<version>$` anywhere in the file, so position is
+     irrelevant to the gate — while upstream only ever prepends new versions at the
+     top. Anchoring fork entries here keeps a file upstream rewrites every release
+     from conflicting on every sync. Add new fork-test versions below, not above. -->
+
+## v0.0.0-forktest.4
+
+- Fork release test: first cut that exercises `release-macos-unsigned`, the fork's
+  unsigned `darwin-aarch64` lane. The lane was added after the previous release
+  (`v0.0.0-forktest.3`) and had therefore never run, so no release this fork has
+  produced carried a macOS asset at all.
+- Also the first cut through upstream's immutable-release flow (#3568), where the
+  platform lanes hand artifacts to `assemble-manifest` as `desktop-release-*`
+  workflow artifacts instead of uploading to a release themselves.
+- Verifies the BitcoinMarkets rename reaches a real bundle: `CFBundleName` and
+  `CFBundleDisplayName` in `desktop/src-tauri/Info.plist`, not just the `.app` and
+  DMG filenames that `productName` controls.
+- Tagged as a prerelease on purpose. `release.yml` skips the rolling `latest.json`
+  upload for any version containing `-`, so this publishes a versioned release
+  without offering an auto-update to installed clients.
