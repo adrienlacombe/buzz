@@ -100,8 +100,21 @@ correctly and described it honestly in PR #7 — it is structural, which is why 
 fix was to move the push rather than change engines. PR #7 hit exactly this and was
 repaired by hand in `3ce7c8adc`.
 
-**If an agentic (02:00) PR ever lands, re-merge upstream by hand afterwards** or
+gh-aw's own logs state this outright rather than leaving it to be inferred — the
+2026-07-31 run printed `pushSignedCommits: merge commit … detected, refusing
+unsigned push fallback`, then `Rewriting bundled commits to a single linear commit
+for signed push compatibility`. The flattening is deliberate on gh-aw's side, so
+it will not be fixed by configuration.
+
+**If an agentic (05:00) PR ever lands, re-merge upstream by hand afterwards** or
 the counter stays stuck: `git merge upstream/main` on `main`, resolve, push.
+
+**When the agentic stage files an issue, read the bottom of it before assuming it
+gave up.** gh-aw converts an intended pull request into an issue when the push
+fails, keeping the whole PR body — resolutions included — and appending the git
+error as a note. Issue #8 looked like a conflict escalation and was actually a
+completed, correct resolution that could not be pushed for want of a
+`workflow`-scoped token. The work is recoverable from the run's bundle artifact.
 
 Issue **#1 `[aw] No-Op Runs`** collects a comment per quiet day from the agentic
 stage. Silence there means that workflow has stopped working — it says nothing
@@ -221,6 +234,7 @@ subcommand, and `desktop/src/shared/constants/kinds.ts` plus
 | `sprig-latest` release | **created manually** | `sprig.yml`'s rolling lane calls `gh release edit sprig-latest` with no create-if-missing fallback. Forks inherit no releases, so it failed on every push to `main` until the release existed |
 | Code scanning | **default setup**, weekly, default query suite | CodeQL over `actions`, `javascript-typescript`, `python`, `rust`. Upstream ships no `codeql.yml`, so this is a setting rather than a workflow file — nothing to conflict. Triage below |
 | `Sync this fork with upstream` workflow | **must stay enabled** | Found `disabled_manually` on 2026-07-31. It is the conflict-resolution half of the sync, so while disabled every conflicted merge was silently dropped — the 01:30 stage aborts and hands off, and nothing was listening. Neither run goes red, so this is invisible except via `gh workflow list --all`. Re-enable with `gh workflow enable "Sync this fork with upstream"` |
+| `SYNC_PUSH_TOKEN` secret | **PAT with `workflow` scope — required** | Without it, no sync touching `.github/workflows/**` can be pushed by either stage: `refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml without 'workflows' permission`. There is no `workflows` key in Actions `permissions:`, so this cannot be granted to `GITHUB_TOKEN` — a PAT is the only route. Upstream edits its workflows regularly, so this blocks routine syncs, not rare ones. It is also what makes CI fire on the sync PR at all |
 
 Secrets set here: `COPILOT_GITHUB_TOKEN` (sync engine),
 `TAURI_SIGNING_PRIVATE_KEY` + `_PASSWORD` and `BUZZ_UPDATER_PUBLIC_KEY` (fork's

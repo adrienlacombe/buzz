@@ -74,10 +74,21 @@ jobs:
           # Full history: a shallow clone cannot compute a merge base, which is
           # the one thing this workflow exists to advance.
           fetch-depth: 0
-          # GITHUB_TOKEN by default. A branch pushed with it does not start new
-          # workflow runs, so CI may not fire on the PR — set SYNC_PUSH_TOKEN to a
-          # PAT to fix that. Kept as an optional secret rather than a hardcoded
-          # one so opting in stays a settings change, not a file edit.
+          # SYNC_PUSH_TOKEN must be a PAT with the `workflow` scope, and without it
+          # this job cannot push a sync that touches `.github/workflows/**` at all:
+          #
+          #   ! [remote rejected] refusing to allow a GitHub App to create or
+          #     update workflow `.github/workflows/ci.yml` without `workflows`
+          #     permission
+          #
+          # There is no `workflows` key in Actions `permissions:`, so this cannot be
+          # granted to GITHUB_TOKEN — a PAT is the only route. Upstream edits its
+          # workflows regularly (ci.yml in the 2026-07-31 batch), so this is a
+          # routine case, not an edge one. It is also why a branch pushed with
+          # GITHUB_TOKEN starts no workflow runs, leaving the PR without CI.
+          #
+          # Left as an optional secret so opting in is a settings change rather than
+          # a file edit — but treat it as required in practice.
           token: ${{ secrets.SYNC_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Stop if a sync PR is already awaiting review
