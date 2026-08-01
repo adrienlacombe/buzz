@@ -125,6 +125,17 @@ it will not be fixed by configuration.
 **If an agentic (05:00) PR ever lands, re-merge upstream by hand afterwards** or
 the counter stays stuck: `git merge upstream/main` on `main`, resolve, push.
 
+**The patch transfer also drops the executable bit, and it surfaces as a red CI
+run rather than as an obvious defect.** The 2026-08-01 agentic PR (#12) carried
+upstream's new `scripts/test-desktop-release-authorization.sh` and
+`scripts/verify-desktop-release-authorization.sh` at mode `100644` where upstream
+has `100755`, so `scripts/test-release-ref-contract.sh` could not execute them:
+`Detect Changed Paths` died with `Permission denied` and exit 126, which then
+skipped every downstream job. Upstream's content was fine — the same contract
+script passes on a hand merge of the same range. **A mode-only change is a
+zero-line entry in `git diff --stat`**, so a diff skim will not show it; when a
+sync adds a script, compare `git ls-tree <ref> -- <path>` against `upstream/main`.
+
 **When the agentic stage files an issue, read the bottom of it before assuming it
 gave up.** gh-aw converts an intended pull request into an issue when the push
 fails, keeping the whole PR body — resolutions included — and appending the git
@@ -174,10 +185,9 @@ place.
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
 | `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
-| `desktop/src-tauri/src/relay_allowlist.rs` | new | Single-relay host allowlist. Upstream is multi-community by design; this fork ships a client that reaches only `relay.bitcoinmarkets.app` |
+| `desktop/src-tauri/src/relay/allowlist.rs` | new | Single-relay host allowlist. Upstream is multi-community by design; this fork ships a client that reaches only `relay.bitcoinmarkets.app`. **Lives under `relay/`, not at the crate root** — see the `relay.rs` row |
 | `desktop/src-tauri/src/native_websocket.rs` | allowlist call in `open_connection` | The transport is the one path every relay session takes, so a host restriction there cannot be bypassed from the UI |
-| `desktop/src-tauri/src/relay.rs` | release builds default to the allowlisted relay | Without it a release build defaults to `ws://localhost:3000`, which the allowlist then rejects — a client that cannot connect at all |
-| `desktop/src-tauri/src/lib.rs` | `mod relay_allowlist;` | Registers the new module |
+| `desktop/src-tauri/src/relay.rs` | release builds default to the allowlisted relay; also declares `pub mod allowlist;` | Without the default a release build uses `ws://localhost:3000`, which the allowlist then rejects — a client that cannot connect at all. The module is declared *here* because upstream's `lib.rs` sits at exactly the 1000-line desktop file-size ratchet limit with no headroom, so the fork's two-line `mod` block there failed `just desktop-check` as soon as upstream added anything (it did, in the 2026-08-01 sync). `lib.rs` now carries no fork patch at all |
 | `mobile/lib/shared/relay/relay_allowlist.dart` | new | Mobile counterpart. Skips enforcement under `flutter test` (`FLUTTER_TEST`) because upstream tests use `wss://relay.example.com`; editing those 13 files would be a large permanent conflict surface |
 | `mobile/lib/shared/relay/relay_socket.dart` | allowlist call in `connect()` | Transport choke point, as on desktop |
 | `mobile/lib/shared/relay/relay_validation.dart` | allowlist call after the shape checks | One hunk covers all four invite/deep-link call sites; placed after the existing checks so malformed input keeps its original error |
@@ -239,6 +249,17 @@ a marked fork-local block after the NIP-34 git kinds, because that cluster is
 exactly where upstream adds new parameterized-replaceable kinds. Leaving a fork
 constant inside it re-creates this conflict on every such addition. **Put new
 fork-local kinds in that block, not next to the upstream kind they relate to.**
+
+**That placement stops integer collisions, not text conflicts — expect a routine
+one there and do not read it as a collision.** The fork block sits at the end of
+`kind.rs`'s constant list, and that is also where upstream appends, so both sides
+insert at the same anchor. The 2026-08-01 sync hit exactly this when upstream
+added `KIND_PROJECT = 30621` (NIP-MP, #3171): a three-way conflict on adjacent
+lines between two kinds that share no integer and no schema. **The resolution is
+keep-both, upstream's constant first in its natural position and the fork block
+after it** — no renumber, no migration, no `ALL_KINDS` or assertion edit beyond
+what each side already brought. Check the integers before reaching for the
+renumber procedure above; it applies only when the *values* actually coincide.
 
 Moving a kind is a **wire-format change**: events already stored under the old
 integer are not rewritten, and clients pinned to it stop matching. Check for
