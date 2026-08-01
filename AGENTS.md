@@ -125,6 +125,17 @@ it will not be fixed by configuration.
 **If an agentic (05:00) PR ever lands, re-merge upstream by hand afterwards** or
 the counter stays stuck: `git merge upstream/main` on `main`, resolve, push.
 
+**The patch transfer also drops the executable bit, and it surfaces as a red CI
+run rather than as an obvious defect.** The 2026-08-01 agentic PR (#12) carried
+upstream's new `scripts/test-desktop-release-authorization.sh` and
+`scripts/verify-desktop-release-authorization.sh` at mode `100644` where upstream
+has `100755`, so `scripts/test-release-ref-contract.sh` could not execute them:
+`Detect Changed Paths` died with `Permission denied` and exit 126, which then
+skipped every downstream job. Upstream's content was fine — the same contract
+script passes on a hand merge of the same range. **A mode-only change is a
+zero-line entry in `git diff --stat`**, so a diff skim will not show it; when a
+sync adds a script, compare `git ls-tree <ref> -- <path>` against `upstream/main`.
+
 **When the agentic stage files an issue, read the bottom of it before assuming it
 gave up.** gh-aw converts an intended pull request into an issue when the push
 fails, keeping the whole PR body — resolutions included — and appending the git
