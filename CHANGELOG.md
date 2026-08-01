@@ -1367,3 +1367,22 @@
   `release-macos-unsigned` end to end, the `desktop-release-*` artifact handoff it
   was ported to for upstream's immutable-release flow (#3568), and the fork-local
   `assemble-manifest` gate that accepts a skipped signed-macOS lane.
+- All of the above passed and the release published — but **the DMG will not
+  launch**: macOS reports "BitcoinMarkets is damaged and can't be opened" because
+  the bundle has no signature, only the executable does. Fixed in `fdf9c7a2e`; use
+  `v0.0.0-forktest.6` instead. To run this one anyway:
+  `codesign --force --deep --sign - /Applications/BitcoinMarkets.app && xattr -dr com.apple.quarantine /Applications/BitcoinMarkets.app`
+
+## v0.0.0-forktest.6
+
+- First macOS build from this fork that actually launches. Tauri now ad-hoc signs
+  the bundle during bundling (`bundle.macOS.signingIdentity: "-"`), so
+  `Contents/_CodeSignature` exists and `codesign --verify --deep --strict` passes.
+  Every earlier macOS artifact — release and canary alike — was unlaunchable.
+- A first install still needs `xattr -dr com.apple.quarantine`: ad-hoc signing is
+  not notarization, and this lane will never be notarized without an Apple
+  Developer ID.
+- Both macOS lanes now **fail** on an invalid bundle signature instead of printing
+  it and continuing. The previous checks ended in `|| true`, which is why a broken
+  DMG reached a published release.
+- Still a prerelease, so the rolling `latest.json` is untouched.
