@@ -595,6 +595,16 @@ jobs:
       - name: Build unsigned Tauri app
         run: cd desktop && pnpm tauri build --verbose --features mesh-llm --config src-tauri/tauri.release.conf.json
         env:
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): upstream's own opt-in for a build
+          # whose default relay is reviewed and fixed. This fork is single-relay by
+          # construction — relay/allowlist.rs pins the host and release builds already
+          # default to wss://relay.bitcoinmarkets.app — so the "Join or create a
+          # community" picker offers a choice that does not exist. With this set,
+          # useCommunityInit auto-creates that one community and the picker never shows.
+          # Compile-time (option_env!), so it must be present at build time, not runtime.
+          # Deliberately absent from the two block/buzz macOS lanes (they never run here)
+          # and from debug builds, where the loopback default correctly keeps the picker.
+          BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"
           BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
           BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -882,6 +892,16 @@ jobs:
       - name: Build Linux Tauri app
         run: cd desktop && pnpm tauri build --verbose --ci --bundles deb,appimage --config src-tauri/tauri.release.conf.json
         env:
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): upstream's own opt-in for a build
+          # whose default relay is reviewed and fixed. This fork is single-relay by
+          # construction — relay/allowlist.rs pins the host and release builds already
+          # default to wss://relay.bitcoinmarkets.app — so the "Join or create a
+          # community" picker offers a choice that does not exist. With this set,
+          # useCommunityInit auto-creates that one community and the picker never shows.
+          # Compile-time (option_env!), so it must be present at build time, not runtime.
+          # Deliberately absent from the two block/buzz macOS lanes (they never run here)
+          # and from debug builds, where the loopback default correctly keeps the picker.
+          BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"
           BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
           BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
@@ -1026,6 +1046,16 @@ jobs:
         shell: bash
         run: cd desktop && pnpm tauri build --verbose --target "$TARGET" --bundles nsis --config src-tauri/tauri.release.conf.json
         env:
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): upstream's own opt-in for a build
+          # whose default relay is reviewed and fixed. This fork is single-relay by
+          # construction — relay/allowlist.rs pins the host and release builds already
+          # default to wss://relay.bitcoinmarkets.app — so the "Join or create a
+          # community" picker offers a choice that does not exist. With this set,
+          # useCommunityInit auto-creates that one community and the picker never shows.
+          # Compile-time (option_env!), so it must be present at build time, not runtime.
+          # Deliberately absent from the two block/buzz macOS lanes (they never run here)
+          # and from debug builds, where the loopback default correctly keeps the picker.
+          BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"
           BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
           BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

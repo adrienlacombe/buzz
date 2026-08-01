@@ -204,6 +204,12 @@ jobs:
         # back to shipping a DMG macOS calls damaged.
         run: cd desktop && pnpm tauri build --verbose --features mesh-llm --config src-tauri/tauri.canary.conf.json
         env:
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): matches release.yml's three
+          # fork-runnable lanes. Auto-creates the single allowlisted community
+          # instead of showing the "Join or create a community" picker, which offers
+          # a choice this fork does not have. Compile-time (option_env!), so the
+          # canary needs it too or it cannot exercise the shipped behaviour.
+          BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
           MACOSX_DEPLOYMENT_TARGET: "10.15"
           CMAKE_OSX_DEPLOYMENT_TARGET: "10.15"
