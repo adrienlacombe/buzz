@@ -164,12 +164,13 @@ place.
 | `crates/buzz-core/src/kind.rs` | `KIND_STARKNET_WALLET_BINDING` + its `is_parameterized_replaceable` assertion, in a fork-local block after the NIP-34 git kinds | Deliberately *not* beside the upstream `30174`–`30178` cluster. See [Fork-local event kinds](#fork-local-event-kinds) |
 | `migrations/0027_wallet_binding_fts.sql`, `0028_wallet_binding_fts_kind_move.sql` | new | NIP-SW search exclusion (`0027`) and its re-point after the 30178 → 30900 move (`0028`). Additive files, so they never conflict — but `0028` exists only because `0027`'s kind literal could not be edited (sqlx checksums). **Never edit an applied migration**; add a follow-on |
 | `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 28, not upstream's 26 | Counts embedded migrations, so it moves whenever the fork adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. A one-integer conflict on every upstream migration — take upstream's count and add the fork's two |
-| `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name |
+| `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name. Sets `signingIdentity: "-"` in its inline config and runs **without** `--no-sign`, which would silently discard it; asserts the bundle signature of the `.app` inside the mounted DMG |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | The two locks pin mesh-llm independently (desktop is outside the root workspace) and can name different revs — at the time of the patch, root `tag=v0.73.1` (`43103c5c`) vs desktop `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit. **Since the 2026-07-31 sync both locks pin `tag=v0.74.0` (`e60b2fe4`), so the patch is a temporary no-op — do not delete it.** The locks stay independent; the next bump that moves one and not the other re-breaks the root-lock version |
 | `docker.yml` | `PUSH_GATEWAY_IMAGE` override; owner-correct attestation hint | Push-gateway image was hardcoded to `ghcr.io/block/buzz-push-gateway` in nine places, so `GHCR_IMAGE` could not retarget it |
-| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published — see [Desktop auto-update](#desktop-auto-update-linux--windows--works) |
+| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms; `release-macos-unsigned` runs without `--no-sign`, sets `BUZZ_MACOS_ADHOC_SIGN=1`, and asserts the bundle signature | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published. `--no-sign` suppressed updater signing too, so the `.app.tar.gz` shipped with no `.sig`; without ad-hoc signing the bundle had no signature at all and macOS called it damaged — see [Desktop auto-update](#desktop-auto-update-linux--windows--works). **Do not name the release-upload command anywhere in this file, even in a comment:** `scripts/test-release-ref-contract.sh` counts occurrences of that string and requires exactly two |
+| `desktop/scripts/build-release-config.mjs` | `BUZZ_MACOS_ADHOC_SIGN=1` emits `bundle.macOS.signingIdentity: "-"` | Ad-hoc bundle signing for the one macOS lane nothing else signs. Opt-in and off by default, so the two `block/buzz` lanes still reach `block/apple-codesign-action` unsigned — setting it unconditionally would sign a bundle that is about to be re-signed. It has to be config rather than a post-build `codesign`, because Tauri builds the DMG in the same invocation |
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
 | `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
@@ -358,13 +359,53 @@ auto-update is **AppImage only**.
 #### macOS is unsigned, and users must be told what that means
 
 `release-macos-unsigned` supplies `darwin-aarch64`. It mirrors the signed
-`release` job's build and drops only the `block/apple-codesign-action` step, so
-the app is **ad-hoc signed and never notarized**. Three consequences, none of
-which auto-update fixes:
+`release` job's build, drops the `block/apple-codesign-action` step, and differs in
+two more ways that are load-bearing rather than incidental: **no `--no-sign`**
+(which would suppress updater signing as well as Apple signing, leaving the
+`.app.tar.gz` without its `.sig`) and **`BUZZ_MACOS_ADHOC_SIGN=1`** on the config
+step, which makes Tauri ad-hoc sign the bundle during bundling. So the app is
+**ad-hoc signed and never notarized**.
 
-1. **A first install still needs `xattr -dr com.apple.quarantine`.** Auto-update
-   does not remove that step; it stops it repeating, because later updates are
-   written by the app itself and never carry a quarantine attribute.
+That last sentence was aspirational until `fdf9c7a2e` (2026-08-01), and the gap is
+worth understanding because nothing caught it for the lane's entire existence.
+Without explicit `signingIdentity`, Tauri produced an `.app` with **no
+`Contents/_CodeSignature` at all** — only the linker's ad-hoc signature on the
+executable. A signed executable is not a signed bundle, and macOS reports the
+difference as **"is damaged and can't be opened"**, which clearing the quarantine
+attribute does not fix. Every macOS artifact this fork had produced, release and
+canary alike, was unlaunchable; it went unnoticed because the DMGs were inspected
+and never installed. An earlier version of this section asserted that the linker
+signature "is what lets the result run on Apple Silicon at all" — it does not.
+
+Ad-hoc signing must be **config, not a `codesign` step after the build**: Tauri
+assembles the DMG inside the same `tauri build` invocation, so signing afterwards
+fixes the `.app` on disk and leaves the DMG — the artifact users download —
+carrying the unsigned copy.
+
+**The diagnostic, if a macOS build ever misbehaves again:** `codesign -dv` reports
+a signature in both the healthy and the broken case, so it cannot tell them apart —
+look for `flags=0x20002(adhoc,linker-signed)`, which is the *broken* shape, versus
+`0x2(adhoc)`. The check that actually distinguishes them is
+`codesign --verify --deep --strict`, which both macOS lanes now run as a hard
+assertion. They previously only *reported* it, with every command ending in
+`|| true`; that is the direct reason a broken DMG reached a published release, and
+it is the failure mode to watch for when adding any new artifact check.
+
+To repair an already-downloaded artifact from before the fix (old canary artifacts
+stay downloadable for ~90 days):
+
+```
+codesign --force --deep --sign - /Applications/BitcoinMarkets.app
+xattr -dr com.apple.quarantine /Applications/BitcoinMarkets.app
+```
+
+Three consequences remain, none of which auto-update fixes:
+
+1. **A first install still needs `xattr -dr com.apple.quarantine`.** Ad-hoc signing
+   is not notarization, so Gatekeeper still objects — correctly now, as an
+   unidentified developer rather than as damage. Auto-update does not remove that
+   step; it stops it repeating, because later updates are written by the app itself
+   and never carry a quarantine attribute.
 2. **The ad-hoc cdhash changes every build**, so macOS may treat each update as a
    different program for keychain ACL purposes and re-prompt for, or lose, access
    to the stored identity. The app-data `identity.key` fallback is what carries
