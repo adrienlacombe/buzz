@@ -27,6 +27,25 @@
 //! of magnitude above a Stark-curve account and is the main practical objection
 //! to this design; price it before depending on it.
 //!
+//! # Sponsored execution (SNIP-9)
+//!
+//! The account embeds OpenZeppelin's `SRC9Component`, so a relayer can submit a
+//! user's calls and pay the fee: `execute_from_outside_v2` takes an
+//! `OutsideExecution` plus a signature, and the component checks the caller, the
+//! time window and nonce replay before delegating the signature check to
+//! `is_valid_signature` — i.e. to BIP-340 against the same Nostr key. **Sponsored
+//! calls therefore carry exactly the same authority as direct ones, and no new
+//! signing scheme is introduced.**
+//!
+//! This exists because a fresh account holds no STRK and every transaction from it
+//! pays ~0.78 STRK of BIP-340 verification before doing anything. Without a
+//! sponsor, a newly deployed account cannot act at all.
+//!
+//! The hash signed here is SNIP-12 typed data over the `OutsideExecution` struct,
+//! **not** [`tx_hash_bytes`] over a transaction hash. Both end up in
+//! `is_valid_signature`, so both are BIP-340 over the 32-byte big-endian encoding
+//! of a felt — the difference is only which felt.
+//!
 //! # Deliberate omissions
 //!
 //! No owner rotation, no guardian, no session keys, no upgrade path. Each is a
@@ -34,6 +53,10 @@
 //! them changes the security model enough to want review on its own terms.
 //! Consequently **the Nostr key is the sole and permanent authority** over this
 //! account: lose it and the funds are gone, leak it and they are stolen.
+//!
+//! Sponsorship does not soften that. A relayer chooses *whether* to pay, never
+//! what executes: it cannot alter the calls, and a signature it cannot produce is
+//! a signature it cannot forge.
 
 /// SNIP-6 `is_valid_signature` success value: the `VALID` short string.
 pub const VALIDATED: felt252 = 'VALID';
@@ -62,6 +85,8 @@ pub fn tx_hash_bytes(hash: felt252) -> ByteArray {
 
 #[starknet::contract(account)]
 pub mod NostrAccount {
+    use openzeppelin_account::extensions::SRC9Component;
+    use openzeppelin_introspection::src5::SRC5Component;
     use starknet::account::Call;
     use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
     use starknet::syscalls::call_contract_syscall;
@@ -69,10 +94,43 @@ pub mod NostrAccount {
     use crate::bip340;
     use super::{VALIDATED, tx_hash_bytes};
 
+    // SNIP-9 outside execution, plus the SRC5 introspection it advertises through.
+    // SRC9Component is account-agnostic: it requires only that this contract
+    // implements SNIP-6 `is_valid_signature`, which routes to BIP-340 below. That
+    // is why sponsorship needs no second signing scheme.
+    component!(path: SRC5Component, storage: src5, event: SRC5Event);
+    component!(path: SRC9Component, storage: src9, event: SRC9Event);
+
+    #[abi(embed_v0)]
+    impl OutsideExecutionV2Impl =
+        SRC9Component::OutsideExecutionV2Impl<ContractState>;
+    #[abi(embed_v0)]
+    impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
+
+    impl SRC9InternalImpl = SRC9Component::InternalImpl<ContractState>;
+
+    // The domain separator comes from the component's own SNIP12MetadataImpl
+    // ('Account.execute_from_outside', version 2), which is what SNIP-9 mandates.
+    // Defining our own would produce hashes no standard relayer computes.
+    impl SNIP12MetadataImpl = SRC9Component::SNIP12MetadataImpl;
+
     #[storage]
     struct Storage {
         /// x-only Nostr pubkey. Immutable: there is no rotation entry point.
         public_key: u256,
+        #[substorage(v0)]
+        src5: SRC5Component::Storage,
+        #[substorage(v0)]
+        src9: SRC9Component::Storage,
+    }
+
+    #[event]
+    #[derive(Drop, starknet::Event)]
+    enum Event {
+        #[flat]
+        SRC5Event: SRC5Component::Event,
+        #[flat]
+        SRC9Event: SRC9Component::Event,
     }
 
     #[constructor]
@@ -82,6 +140,9 @@ pub mod NostrAccount {
         // prevents funds being sent to a permanently locked account.
         assert(public_key != 0, 'nostr pubkey must be nonzero');
         self.public_key.write(public_key);
+        // Registers ISRC9_V2_ID in SRC5 so a relayer can discover that this
+        // account accepts sponsored calls before attempting one.
+        self.src9.initializer();
     }
 
     #[abi(embed_v0)]

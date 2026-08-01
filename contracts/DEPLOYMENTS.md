@@ -5,7 +5,30 @@
 A Starknet account whose owner is a Nostr x-only pubkey, validating BIP-340
 Schnorr signatures. See [`src/account.cairo`](src/account.cairo).
 
-### Mainnet (`SN_MAIN`)
+> ## ⚠️ The declared class below is superseded and must be re-declared
+>
+> Adding SNIP-9 sponsored execution changed the contract, so the class hash moved:
+>
+> | | |
+> |---|---|
+> | Declared on mainnet | `0x038a57ffba543e9fd54998a60436effc14e878cdcc64d4676ff642396fda346e` |
+> | Current source builds to | `0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537` |
+>
+> **Do not derive addresses from the declared hash any more** — it belongs to a
+> class with no `execute_from_outside_v2`, so accounts at those addresses could
+> never be sponsored, and a fresh account cannot pay its own ~0.78 STRK of
+> BIP-340 verification.
+>
+> Nothing was ever deployed, so this costs nothing beyond a re-declare. That is
+> precisely why the change was made before the first deployment rather than after:
+> the address is a hash of the class, so every address changes with it, and doing
+> this later would have orphaned every existing account and any funds sent to one.
+>
+> Re-declare with `sncast`, then replace the hashes and the tx below and delete
+> this notice. The measurements further down still hold — SNIP-9 adds entry points
+> but does not touch the BIP-340 path that dominates the cost.
+
+### Mainnet (`SN_MAIN`) — superseded, see the notice above
 
 | | |
 |---|---|
