@@ -18,6 +18,9 @@ use buzz_starknet::account::{
     INostrAccountDispatcher, INostrAccountDispatcherTrait, VALIDATED, tx_hash_bytes,
 };
 use buzz_starknet::mocks::{ISimpleMockDispatcher, ISimpleMockDispatcherTrait};
+use openzeppelin_account::extensions::src9::OutsideExecution;
+use openzeppelin_account::extensions::src9::snip12_utils::OutsideExecutionStructHash;
+use openzeppelin_utils::cryptography::snip12::StructHash;
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
     start_cheat_signature_global, start_cheat_transaction_hash_global,
@@ -316,4 +319,36 @@ fn unused_nonces_start_available() {
     let probe = ISrc9ProbeDispatcher { contract_address: account.contract_address };
     assert!(probe.is_valid_outside_execution_nonce(1), "a fresh nonce must be available");
     assert!(probe.is_valid_outside_execution_nonce(0), "zero is a nonce like any other");
+}
+
+/// Cross-checks the Rust client's SNIP-12 struct hash against OpenZeppelin's.
+///
+/// The struct hash is where a mirror implementation actually goes wrong: nested
+/// call hashing, field order, and two separate type hashes. This computes it with
+/// OZ's own `OutsideExecutionStructHash` for the same fixture
+/// `buzz_core::outside_execution::tests::fixture` uses, so the two are pinned
+/// together. A disagreement means every sponsored transaction fails with
+/// `SRC9: invalid signature` and nothing says why.
+///
+/// To regenerate after changing the fixture: run this test, take the actual value
+/// from the failure, and update `CAIRO_STRUCT_HASH` in `outside_execution.rs`.
+#[test]
+fn outside_execution_struct_hash_matches_rust() {
+    let calls = array![
+        Call {
+            to: 0x1234.try_into().unwrap(), selector: 0x5678, calldata: array![1, 2].span(),
+        },
+    ];
+    let execution = OutsideExecution {
+        caller: 'ANY_CALLER'.try_into().unwrap(),
+        nonce: 42,
+        execute_after: 1000,
+        execute_before: 2000,
+        calls: calls.span(),
+    };
+    assert_eq!(
+        execution.hash_struct(),
+        0x2d0847a575b68e0e072cab0d3e1dd2df5db9eabe1a04730833ab173696b0d45,
+        "OZ's struct hash must equal the one buzz-core computes",
+    );
 }

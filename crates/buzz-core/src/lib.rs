@@ -28,6 +28,8 @@ pub mod kind;
 pub mod network;
 /// Agent observer frame helpers.
 pub mod observer;
+/// SNIP-9 outside execution: the client half of sponsored transactions.
+pub mod outside_execution;
 /// NIP-AB device pairing — crypto primitives, message types, and errors.
 pub mod pairing;
 /// Presence status types shared across crates.
