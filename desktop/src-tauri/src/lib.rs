@@ -178,7 +178,10 @@ pub fn run() {
             }
             // Forward any deep link URLs from the duplicate launch.
             for arg in &argv {
-                if arg.starts_with("buzz://") {
+                // FORK-LOCAL PATCH (adrienlacombe/buzz): both schemes, matching
+                // handle_deep_link_url. Only `bitcoinmarkets` is OS-registered;
+                // `buzz://` is accepted because such links exist in message history.
+                if arg.starts_with("bitcoinmarkets://") || arg.starts_with("buzz://") {
                     handle_deep_link_url(app, arg);
                 }
             }

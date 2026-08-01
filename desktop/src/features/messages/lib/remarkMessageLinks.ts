@@ -20,7 +20,14 @@
 // --experimental-strip-types`. `tsconfig.json` enables `allowImportingTsExtensions`.
 import { createRemarkPrefixPlugin } from "../../../shared/lib/createRemarkPrefixPlugin.ts";
 
-const MESSAGE_URL_PATTERN = /(?:buzz|buzz):\/\/message\?[^\s<>"')\]]+/g;
+// FORK-LOCAL PATCH (adrienlacombe/buzz): `bitcoinmarkets` added to the
+// alternation. This detects bare message URLs in message text, so a scheme
+// missing here renders an otherwise valid link as plain text. Upstream's
+// `(?:buzz|buzz)` was a degenerate alternation left over from its own rename —
+// both branches were identical — which is why this reads as an edit rather than
+// an addition.
+const MESSAGE_URL_PATTERN =
+  /(?:bitcoinmarkets|buzz):\/\/message\?[^\s<>"')\]]+/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
 
 function trimMessageLinkMatch(matchText: string) {

@@ -291,10 +291,18 @@ fn parse_nostr_bind_deep_link(url: &Url) -> Result<NostrBindDeepLinkPayload, Str
     })
 }
 
-/// Handle an incoming `buzz://` deep link URL.
+/// The scheme this fork registers with the OS. FORK-LOCAL PATCH
+/// (adrienlacombe/buzz): `bitcoinmarkets`, not `buzz`, so the two apps do not
+/// contest the same links. Kept next to the handler because `tauri.conf.json`
+/// takes no comments, and the two must agree.
+pub(crate) const DEEP_LINK_SCHEME: &str = "bitcoinmarkets";
+
+/// Handle an incoming deep link URL.
 ///
 /// Currently supports:
-/// - `buzz://connect?relay=<ws(s)://...>` — emits `deep-link-connect` to the frontend
+/// - `bitcoinmarkets://connect?relay=<ws(s)://...>` — emits `deep-link-connect`
+///   to the frontend. Legacy `buzz://` URLs are accepted too; see the scheme
+///   check below.
 pub(crate) fn handle_deep_link_url(app: &tauri::AppHandle, url_str: &str) {
     let url = match Url::parse(url_str) {
         Ok(u) => u,
@@ -304,7 +312,14 @@ pub(crate) fn handle_deep_link_url(app: &tauri::AppHandle, url_str: &str) {
         }
     };
 
-    if url.scheme() != "buzz" {
+    // FORK-LOCAL PATCH (adrienlacombe/buzz): accept both schemes.
+    //
+    // Only `bitcoinmarkets` is registered with the OS — registering `buzz` too is
+    // what made this fork and upstream Buzz fight over the same links, with the OS
+    // picking a winner non-deterministically. But `buzz://message?…` links are
+    // already embedded in message history, so inbound tolerance costs one line and
+    // keeps them working; it is emission, not acceptance, that has to be exclusive.
+    if !matches!(url.scheme(), DEEP_LINK_SCHEME | "buzz") {
         eprintln!("buzz-desktop: ignoring unsupported deep link scheme: {url_str}");
         return;
     }

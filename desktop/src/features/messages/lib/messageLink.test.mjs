@@ -14,9 +14,16 @@ const MESSAGE =
 const THREAD =
   "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
+// FORK-LOCAL PATCH (adrienlacombe/buzz): the emitted scheme, in one place.
+// Assertions below derive from this rather than repeating a literal, so a future
+// rename cannot fail these tests for the wrong reason. The legacy `buzz://`
+// literals further down are deliberate — those tests exist to prove old links in
+// message history still parse, so they must not follow the rename.
+const SCHEME = "bitcoinmarkets:";
+
 test("buildMessageLink → parseMessageLink round-trips without thread", () => {
   const url = buildMessageLink({ channelId: CHANNEL, messageId: MESSAGE });
-  assert.equal(url, `buzz://message?channel=${CHANNEL}&id=${MESSAGE}`);
+  assert.equal(url, `${SCHEME}//message?channel=${CHANNEL}&id=${MESSAGE}`);
 
   const parsed = parseMessageLink(url);
   assert.equal(parsed.ok, true);
@@ -53,8 +60,8 @@ test("buildMessageLink treats null/empty thread as absent", () => {
     messageId: MESSAGE,
     threadRootId: "",
   });
-  assert.equal(a, `buzz://message?channel=${CHANNEL}&id=${MESSAGE}`);
-  assert.equal(b, `buzz://message?channel=${CHANNEL}&id=${MESSAGE}`);
+  assert.equal(a, `${SCHEME}//message?channel=${CHANNEL}&id=${MESSAGE}`);
+  assert.equal(b, `${SCHEME}//message?channel=${CHANNEL}&id=${MESSAGE}`);
 });
 
 test("buildMessageLink rejects missing required params", () => {

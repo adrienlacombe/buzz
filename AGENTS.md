@@ -193,7 +193,12 @@ place.
 | `mobile/lib/shared/relay/relay_validation.dart` | allowlist call after the shape checks | One hunk covers all four invite/deep-link call sites; placed after the existing checks so malformed input keeps its original error |
 | `mobile/lib/features/pairing/pairing_provider.dart` | allowlist call in `_validateRelayUrl` | QR pairing is a separate entry point from invites |
 | `mobile/lib/shared/relay/relay.dart` | export of `relay_allowlist.dart` | Barrel re-export |
-| `desktop/src-tauri/tauri.conf.json` | `productName` `Buzz` → `BitcoinMarkets` | Names the `.app` bundle and the DMG filename. **The one divergence carrying no in-file marker** — JSON takes no comments — so a sync reviewer has only this row to go on |
+| `desktop/src-tauri/tauri.conf.json` | `productName` `Buzz` → `BitcoinMarkets`; `identifier` → `app.bitcoinmarkets.desktop`; deep-link scheme → `bitcoinmarkets` | Names the `.app` bundle and the DMG filename. **The one divergence carrying no in-file marker** — JSON takes no comments — so a sync reviewer has only this row to go on. The identifier and scheme changes are what stop this fork sharing state with an upstream Buzz install; see [Splitting state from upstream Buzz](#splitting-state-from-upstream-buzz) |
+| `desktop/src-tauri/src/app_state_keyring.rs` | `RELEASE_KEYRING_SERVICE` = `bitcoinmarkets-desktop`, and it joins the canonical list in `migration_marker_name` | The keychain service name is a constant that does **not** key off the bundle identifier (`secret_store.rs:50` says so explicitly), so renaming the identifier alone would split the app-data directory while leaving both apps on one keychain entry — identity and store then disagree, which is worse than sharing both |
+| `desktop/src-tauri/src/deep_link.rs` | `DEEP_LINK_SCHEME` const; handler accepts `bitcoinmarkets` **and** `buzz` | Only `bitcoinmarkets` is OS-registered, which is the collision fix; `buzz://` stays accepted inbound because such links already exist in message history. Emission is exclusive, acceptance is not |
+| `desktop/src-tauri/src/lib.rs` | `mod relay_allowlist;` (see below); single-instance argv accepts both schemes | Matches the `deep_link.rs` guard — a duplicate launch forwards either scheme |
+| `desktop/src/features/messages/lib/messageLink.ts` + `remarkMessageLinks.ts` + `shared/api/inviteHelpers.ts` | emit `bitcoinmarkets:`, accept both | `messageLink.ts` builds "Copy link" URLs, so it must emit the registered scheme or copied links open the wrong app. The other two are acceptors: `remarkMessageLinks` detects bare URLs in message text (a miss renders a valid link as inert text) and `inviteHelpers` parses invite links. Upstream's `(?:buzz\|buzz)` alternation was degenerate — leftover from its own rename |
+| `web/src/shared/lib/deep-link.ts` | new | Single source of truth for the scheme in the web client, which is what hands these URLs to the OS. Additive so it cannot conflict; the three call sites (`InvitePage.tsx` ×2, `ConnectButton.tsx`) import it rather than inlining fork-local strings into upstream components. `InvitePage` also says "Accept invite in BitcoinMarkets" |
 | `desktop/src-tauri/Info.plist` | `CFBundleDisplayName`, `CFBundleName` and the three `NS*UsageDescription` strings → `BitcoinMarkets` | `productName` only renames the `.app` directory, the DMG and the mounted volume. These keys are what macOS displays: Finder reads `CFBundleDisplayName`, the menu bar reads `CFBundleName`, and the usage descriptions are quoted verbatim in system permission prompts. Verified against a built canary before patching — the bundle was `BitcoinMarkets.app` while `CFBundleName` was still `Buzz`, so the app asked for the microphone as "Buzz". `CFBundleIdentifier` and the `buzz-desktop` executable name stay |
 | `mobile/ios/Runner/Info.plist` | `CFBundleName` and the three `NS*UsageDescription` strings → `BitcoinMarkets` | The xcconfigs below set `CFBundleDisplayName` (home-screen label); `CFBundleName` is the shorter name iOS falls back to in Settings, and it was still `Buzz`. Usage descriptions appear verbatim in iOS permission prompts |
 | `mobile/ios/Flutter/Debug.xcconfig`, `Release.xcconfig` | `APP_DISPLAY_NAME = BitcoinMarkets` | iOS home-screen name, debug and release |
@@ -222,6 +227,41 @@ conflict surface for code that never executes. They would break if ever enabled.
 `infra/aws/` is additive-only by construction — it edits no upstream file. If an
 upstream sync ever conflicts there, something has gone wrong; do not resolve it by
 reformatting the Terraform.
+
+### Splitting state from upstream Buzz
+
+This fork and upstream Buzz can be installed side by side, and until 2026-08-01 they
+shared everything that matters: the same app-data directory, the same keychain
+entry, and the same URL scheme. One account, one settings store, and `buzz://`
+links opening whichever app macOS felt like.
+
+Three things had to move, and only the first is config:
+
+| Collision | Keyed by | Now |
+|-----------|----------|-----|
+| App-data dir (`identity.key`, settings, window state, localStorage) | `identifier` in `tauri.conf.json` | `app.bitcoinmarkets.desktop` |
+| OS keychain entry | a **constant** in `app_state_keyring.rs`, not the identifier | `bitcoinmarkets-desktop` |
+| `buzz://` deep links | `plugins.deep-link.desktop.schemes` | `bitcoinmarkets` only |
+
+The keychain one is the trap. `secret_store.rs:50` states that the service name
+"does not key off the bundle identifier", so changing the identifier alone splits
+the data directory while leaving both apps writing one keychain entry — the
+identity and the store that guards it then disagree, which is worse than sharing
+both. **They move together or not at all.**
+
+**There is deliberately no migration.** `migrate_legacy_app_data_dir` only maps
+`xyz.block.buzz.app*` → `xyz.block.sprout.app*`, so the new identifier matches
+neither prefix, `legacy_app_data_dir` returns `None`, and nothing is copied. That is
+intentional: this fork wanted a clean separation, not an inherited identity. The
+practical consequence is that **an existing install looks like a fresh account
+after this change** — the old data still sits under `xyz.block.buzz.app`, unread.
+Anyone who wants it carried over has to write that migration, and the hook to
+extend is `legacy_app_data_dir`.
+
+Bundle identifiers were originally left alone on purpose, so installs kept
+upgrading and the app-data directory holding the `identity.key` keyring fallback
+did not move. That reasoning was about *upgrades*; coexisting with upstream was not
+a case it considered.
 
 ### Fork-local event kinds
 
@@ -644,8 +684,10 @@ or invoke with the full path.
 
 ### Deep Links
 
-`buzz://message?channel=<uuid>&id=<hex>` links reference a specific message
-thread. To read the linked thread:
+`bitcoinmarkets://message?channel=<uuid>&id=<hex>` links reference a specific
+message thread. This fork emits `bitcoinmarkets://` and still accepts `buzz://`,
+so either scheme may turn up — older links in message history use the latter. To
+read the linked thread:
 
 ```bash
 buzz messages thread --channel <uuid> --event <hex> --format compact

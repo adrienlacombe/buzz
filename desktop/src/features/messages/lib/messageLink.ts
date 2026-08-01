@@ -4,7 +4,14 @@
  * Format: `buzz://message?channel=<uuid>&id=<eventId>[&thread=<rootId>]`
  */
 
-const MESSAGE_LINK_SCHEME = "buzz:";
+// FORK-LOCAL PATCH (adrienlacombe/buzz): emit `bitcoinmarkets:`, accept both.
+//
+// Only `bitcoinmarkets` is registered with the OS, so a freshly copied link has
+// to use it or it opens upstream Buzz — or nothing. `buzz:` stays accepted
+// because those links are already sitting in message history and would otherwise
+// render as dead text.
+const MESSAGE_LINK_SCHEME = "bitcoinmarkets:";
+const LEGACY_MESSAGE_LINK_SCHEME = "buzz:";
 const MESSAGE_LINK_HOST = "message";
 
 export type MessageLinkInput = {
@@ -67,7 +74,10 @@ export function parseMessageLink(url: string): MessageLinkParseResult {
     return { ok: false, reason: "invalid-url" };
   }
 
-  if (parsed.protocol !== MESSAGE_LINK_SCHEME) {
+  if (
+    parsed.protocol !== MESSAGE_LINK_SCHEME &&
+    parsed.protocol !== LEGACY_MESSAGE_LINK_SCHEME
+  ) {
     return { ok: false, reason: "wrong-scheme" };
   }
   // `new URL("buzz://message?…")` puts "message" in `hostname`.
@@ -100,7 +110,14 @@ export function parseMessageLink(url: string): MessageLinkParseResult {
  */
 export function isMessageLink(href: string | undefined | null): boolean {
   if (!href) return false;
-  return href.startsWith("buzz://message?") || href === "buzz://message";
+  // Both schemes, matching parseMessageLink — this is the markdown renderer's
+  // pre-check, so a miss here renders an existing link as inert text.
+  const prefixes = [MESSAGE_LINK_SCHEME, LEGACY_MESSAGE_LINK_SCHEME];
+  return prefixes.some(
+    (scheme) =>
+      href.startsWith(`${scheme}//${MESSAGE_LINK_HOST}?`) ||
+      href === `${scheme}//${MESSAGE_LINK_HOST}`,
+  );
 }
 
 type MessageLinkRenderInput = {

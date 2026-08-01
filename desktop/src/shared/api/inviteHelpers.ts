@@ -31,9 +31,13 @@ export function parseInviteInput(input: string): ParsedInvite | null {
   try {
     const url = new URL(trimmed);
 
-    // buzz://join?relay=...&code=...
+    // bitcoinmarkets://join?relay=...&code=...
     // Non-special schemes put the authority in `host`, not `pathname`.
-    if (url.protocol === "buzz:") {
+    //
+    // FORK-LOCAL PATCH (adrienlacombe/buzz): both schemes. Invite links already
+    // handed out as `buzz://join?…` must keep working, so this accepts them; only
+    // emission moved to the new scheme.
+    if (url.protocol === "bitcoinmarkets:" || url.protocol === "buzz:") {
       if (url.host !== "join") return null;
       const relay = url.searchParams.get("relay");
       const code = url.searchParams.get("code");

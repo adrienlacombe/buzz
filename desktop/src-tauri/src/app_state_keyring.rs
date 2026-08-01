@@ -6,6 +6,16 @@ fn dev_keyring_service(configured: Option<String>) -> String {
         .unwrap_or_else(|| "buzz-desktop-dev".to_string())
 }
 
+// FORK-LOCAL PATCH (adrienlacombe/buzz): the release service is
+// "bitcoinmarkets-desktop", not "buzz-desktop".
+//
+// This constant does not key off the bundle identifier (see the note in
+// secret_store.rs), so renaming the identifier alone would split the app-data
+// directory and still leave this fork and upstream Buzz sharing one keychain
+// entry — the identity and its store would then disagree, which is worse than
+// sharing both. Both have to move together.
+pub(crate) const RELEASE_KEYRING_SERVICE: &str = "bitcoinmarkets-desktop";
+
 pub(crate) fn keyring_service() -> &'static str {
     if cfg!(debug_assertions) {
         static DEV_SERVICE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -13,12 +23,19 @@ pub(crate) fn keyring_service() -> &'static str {
             .get_or_init(|| dev_keyring_service(std::env::var("BUZZ_DEV_KEYRING_SERVICE").ok()))
             .as_str()
     } else {
-        "buzz-desktop"
+        RELEASE_KEYRING_SERVICE
     }
 }
 
 pub(super) fn migration_marker_name(service: &str, default_name: &str) -> String {
-    if service == "buzz-desktop" || service == "buzz-desktop-dev" {
+    // FORK-LOCAL PATCH (adrienlacombe/buzz): RELEASE_KEYRING_SERVICE joins the
+    // canonical list. Without it the fork's release build would fall through to
+    // the scoped branch and namespace its marker, which is the behaviour meant
+    // for per-worktree dev services — not for a release build.
+    if service == RELEASE_KEYRING_SERVICE
+        || service == "buzz-desktop"
+        || service == "buzz-desktop-dev"
+    {
         default_name.to_string()
     } else {
         format!("identity.{service}.migrated")
