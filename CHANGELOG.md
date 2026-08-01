@@ -1454,3 +1454,40 @@
   it and continuing. The previous checks ended in `|| true`, which is why a broken
   DMG reached a published release.
 - Still a prerelease, so the rolling `latest.json` is untouched.
+- Verified on the downloaded DMG: `_CodeSignature/CodeResources` present, flags
+  `0x10002(adhoc,runtime)`, `codesign --verify --deep --strict` exits 0, and all
+  five bundled sidecars individually validated.
+
+## v0.5.99
+
+**The fork's first non-prerelease release, and the first to publish a macOS entry
+to the auto-update manifest.**
+
+- Writes `latest.json` on the rolling `buzz-desktop-latest` release with
+  `darwin-aarch64`, `linux-x86_64` and `windows-x86_64`. Before this the manifest
+  advertised `0.0.0-forktest.3` and carried **no macOS entry at all**, so macOS
+  clients were never offered anything.
+- macOS is ad-hoc signed and launches (see `v0.0.0-forktest.6`). A **first** install
+  still needs `xattr -dr com.apple.quarantine`; later updates are written by the app
+  itself and carry no quarantine attribute.
+- Linux auto-update is AppImage only — `.deb` is not auto-updatable by Tauri
+  constraint.
+
+### Versioning: why 0.5.99
+
+Fork releases deliberately sit outside upstream's numbering. Upstream is at 0.5.2
+and increments from there, so a fork release numbered `0.5.3` would collide with
+upstream's own `0.5.3`: this file keeps fork entries at the bottom, upstream prepends
+at the top, and two identical `## v0.5.3` headings would make `release.yml`'s
+release-notes `awk` take upstream's block instead of the fork's. `0.5.99` avoids that
+while still sorting above anything a client currently has, and leaves upstream's
+`0.6.x` sorting above it so the fork can keep tracking.
+
+### Untested until someone updates
+
+Whether the desktop identity survives a macOS auto-update. The ad-hoc cdhash changes
+every build, so macOS may treat each update as a different program for keychain ACL
+purposes and re-prompt for, or lose, access to the stored identity; the app-data
+`identity.key` fallback is what should carry it through. Updating **from**
+`v0.0.0-forktest.6` **to** this release is the first opportunity to find out — check
+that the account survives rather than assuming it did.
