@@ -297,6 +297,24 @@ fn parse_nostr_bind_deep_link(url: &Url) -> Result<NostrBindDeepLinkPayload, Str
 /// takes no comments, and the two must agree.
 pub(crate) const DEEP_LINK_SCHEME: &str = "bitcoinmarkets";
 
+/// The legacy scheme, still accepted inbound. Links of this form are already
+/// embedded in message history, so refusing them would strand them; only
+/// *emission* moved to [`DEEP_LINK_SCHEME`].
+const LEGACY_DEEP_LINK_SCHEME: &str = "buzz";
+
+/// Whether `arg` looks like a deep link this app handles.
+///
+/// FORK-LOCAL PATCH (adrienlacombe/buzz): lives here rather than inline at the
+/// single-instance argv loop in `lib.rs`, for two reasons — it keeps the scheme
+/// literals in one place next to the handler that must agree with them, and
+/// `lib.rs` sits exactly at the 1000-line ceiling enforced by
+/// `desktop/scripts/check-file-sizes.mjs`, so growing it by even a comment fails
+/// `just desktop-check`.
+pub(crate) fn is_supported_deep_link(arg: &str) -> bool {
+    arg.starts_with(&format!("{DEEP_LINK_SCHEME}://"))
+        || arg.starts_with(&format!("{LEGACY_DEEP_LINK_SCHEME}://"))
+}
+
 /// Handle an incoming deep link URL.
 ///
 /// Currently supports:
@@ -319,7 +337,7 @@ pub(crate) fn handle_deep_link_url(app: &tauri::AppHandle, url_str: &str) {
     // picking a winner non-deterministically. But `buzz://message?…` links are
     // already embedded in message history, so inbound tolerance costs one line and
     // keeps them working; it is emission, not acceptance, that has to be exclusive.
-    if !matches!(url.scheme(), DEEP_LINK_SCHEME | "buzz") {
+    if !matches!(url.scheme(), DEEP_LINK_SCHEME | LEGACY_DEEP_LINK_SCHEME) {
         eprintln!("buzz-desktop: ignoring unsupported deep link scheme: {url_str}");
         return;
     }
