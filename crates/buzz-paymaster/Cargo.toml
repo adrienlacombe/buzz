@@ -1,0 +1,16 @@
+[package]
+name = "buzz-paymaster"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sponsors Starknet transactions for Nostr-key-controlled accounts"
+
+[dependencies]
+buzz-core = { workspace = true }
+starknet-core = "0.16.0"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]

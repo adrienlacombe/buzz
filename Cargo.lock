@@ -1139,6 +1139,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-paymaster"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "starknet-core",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "buzz-persona"
 version = "0.1.0"
 dependencies = [
