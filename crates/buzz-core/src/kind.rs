@@ -609,6 +609,15 @@ pub const KIND_GIT_STATUS_CLOSED: u32 = 1632;
 /// NIP-34: Status — Draft.
 pub const KIND_GIT_STATUS_DRAFT: u32 = 1633;
 
+/// NIP-MP: Multi-repo project — a named grouping of `kind:30617` repository
+/// announcements (parameterized replaceable, d=project slug).
+///
+/// Members are `a` tags holding `30617:<owner-hex>:<repo-d>` coordinates, so one
+/// project may span repositories owned by different pubkeys. The signer gains no
+/// authority over any member: push policy reads the repository's own
+/// announcement, never a project. See `docs/nips/NIP-MP.md`.
+pub const KIND_PROJECT: u32 = 30621;
+
 // FORK-LOCAL PATCH (adrienlacombe/buzz): fork-reserved kinds, 30900–30999.
 //
 // Kept here rather than beside upstream's 30174–30178 cluster on purpose. That
@@ -766,6 +775,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_GIT_STATUS_MERGED,
     KIND_GIT_STATUS_CLOSED,
     KIND_GIT_STATUS_DRAFT,
+    KIND_PROJECT,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -863,6 +873,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_TEAM_CATALOG)); // 30178
 const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 30622 ∈ 30000–39999
+const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
                                                                          // FORK-LOCAL PATCH (adrienlacombe/buzz): keeps the fork's reserved block addressable.
