@@ -239,6 +239,17 @@ exactly where upstream adds new parameterized-replaceable kinds. Leaving a fork
 constant inside it re-creates this conflict on every such addition. **Put new
 fork-local kinds in that block, not next to the upstream kind they relate to.**
 
+**That placement stops integer collisions, not text conflicts — expect a routine
+one there and do not read it as a collision.** The fork block sits at the end of
+`kind.rs`'s constant list, and that is also where upstream appends, so both sides
+insert at the same anchor. The 2026-08-01 sync hit exactly this when upstream
+added `KIND_PROJECT = 30621` (NIP-MP, #3171): a three-way conflict on adjacent
+lines between two kinds that share no integer and no schema. **The resolution is
+keep-both, upstream's constant first in its natural position and the fork block
+after it** — no renumber, no migration, no `ALL_KINDS` or assertion edit beyond
+what each side already brought. Check the integers before reaching for the
+renumber procedure above; it applies only when the *values* actually coincide.
+
 Moving a kind is a **wire-format change**: events already stored under the old
 integer are not rewritten, and clients pinned to it stop matching. Check for
 existing events before moving one that has been live.
