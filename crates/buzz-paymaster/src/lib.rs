@@ -34,7 +34,9 @@
 //! behind the trait, so the policy and call construction are testable without a
 //! node and without funds.
 
-use starknet_core::types::Felt;
+use buzz_core::outside_execution::OutsideExecution;
+use starknet_core::types::{Call, Felt};
+use starknet_core::utils::get_selector_from_name;
 
 /// Errors from sponsorship.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -127,6 +129,23 @@ pub fn plan_for(
 /// sponsor's funded account.
 pub const UDC_DEPLOY_CONTRACT_SELECTOR: &str = "deployContract";
 
+/// SNIP-9 sponsored-execution entry point on the user's account.
+pub const EXECUTE_FROM_OUTSIDE_SELECTOR: &str = "execute_from_outside_v2";
+
+/// The Universal Deployer on Starknet mainnet.
+///
+/// Provided as a default rather than a hardcoded value: it is a parameter
+/// everywhere below, because a wrong UDC address silently deploys nothing while
+/// still charging the sponsor.
+///
+/// Provenance, stated so it can be re-checked rather than trusted: this is the
+/// address `avnu-labs/paymaster` uses (`paymaster-starknet/src/constants.rs`), and
+/// `starknet_getClassHashAt` on mainnet confirms a contract is deployed there.
+/// **That confirms existence, not semantics** — verify it really is the UDC, with
+/// the `deployContract` signature assumed here, before pointing funds at it.
+pub const UDC_MAINNET: Felt =
+    Felt::from_hex_unchecked("0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf");
+
 /// Builds the UDC calldata that deploys a user's account at its derived address.
 ///
 /// # The invariant that matters
@@ -153,6 +172,57 @@ pub fn udc_deploy_calldata(
     ];
     out.extend_from_slice(&ctor);
     Ok(out)
+}
+
+/// The calls a sponsor submits as **one** transaction to service a request.
+///
+/// Starknet executes a multicall atomically, so returning both calls together is
+/// what makes deploy-then-execute all-or-nothing: if the deployment reverts, the
+/// user's calls never run, and the sponsor is not left having paid to create an
+/// account whose first action failed separately.
+///
+/// Order is load-bearing. The deployment must come first, or the execute call
+/// targets an address with no contract at it.
+pub fn build_atomic_calls(
+    plan: &SponsorPlan,
+    udc: Felt,
+    class_hash: Felt,
+    nostr_pubkey: &str,
+    execution: &OutsideExecution,
+    signature: &[Felt; 4],
+) -> Result<Vec<Call>, SponsorError> {
+    // Re-derive rather than trust the plan: this function is the last point before
+    // money is spent, and a plan carrying an address that does not match the pubkey
+    // would aim a sponsored call at a contract the user does not control.
+    let derived = buzz_core::starknet_account::account_address(class_hash, nostr_pubkey)
+        .map_err(|e| SponsorError::Config(format!("cannot derive address: {e}")))?;
+    if plan.address() != derived {
+        return Err(SponsorError::Declined(format!(
+            "plan address {:#x} does not match the address derived for this pubkey ({:#x})",
+            plan.address(),
+            derived
+        )));
+    }
+
+    let mut calls = Vec::with_capacity(2);
+    if plan.deploys() {
+        calls.push(Call {
+            to: udc,
+            selector: get_selector_from_name(UDC_DEPLOY_CONTRACT_SELECTOR)
+                .map_err(|e| SponsorError::Config(format!("bad UDC selector: {e}")))?,
+            calldata: udc_deploy_calldata(class_hash, nostr_pubkey)?,
+        });
+    }
+    calls.push(Call {
+        // The user's own account. The signature was computed over a hash binding
+        // this address, so sending elsewhere cannot succeed — it would be rejected
+        // rather than misapplied, but it would still cost the sponsor a fee.
+        to: derived,
+        selector: get_selector_from_name(EXECUTE_FROM_OUTSIDE_SELECTOR)
+            .map_err(|e| SponsorError::Config(format!("bad execute selector: {e}")))?,
+        calldata: buzz_core::outside_execution::execute_from_outside_calldata(execution, signature),
+    });
+    Ok(calls)
 }
 
 #[cfg(test)]
@@ -268,5 +338,125 @@ mod tests {
         let a = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY).unwrap();
         let b = plan_for(&FakeChain { deployed: false }, class_hash(), other).unwrap();
         assert_ne!(a.address(), b.address());
+    }
+
+    fn an_execution() -> OutsideExecution {
+        OutsideExecution {
+            caller: buzz_core::outside_execution::any_caller(),
+            nonce: Felt::from(7_u32),
+            execute_after: 100,
+            execute_before: 200,
+            calls: vec![buzz_core::outside_execution::OutsideCall {
+                to: Felt::from(0xabc_u32),
+                selector: Felt::from(0xdef_u32),
+                calldata: vec![Felt::ONE],
+            }],
+        }
+    }
+
+    fn a_signature() -> [Felt; 4] {
+        [Felt::ONE, Felt::TWO, Felt::THREE, Felt::from(4_u32)]
+    }
+
+    fn calls_for(deployed: bool) -> Vec<Call> {
+        let plan = plan_for(&FakeChain { deployed }, class_hash(), PUBKEY).unwrap();
+        build_atomic_calls(
+            &plan,
+            UDC_MAINNET,
+            class_hash(),
+            PUBKEY,
+            &an_execution(),
+            &a_signature(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_existing_account_gets_one_call() {
+        let calls = calls_for(true);
+        assert_eq!(calls.len(), 1, "no deployment should be paid for");
+        assert_eq!(
+            calls[0].to,
+            buzz_core::starknet_account::account_address(class_hash(), PUBKEY).unwrap()
+        );
+        assert_eq!(
+            calls[0].selector,
+            get_selector_from_name(EXECUTE_FROM_OUTSIDE_SELECTOR).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_new_account_gets_deploy_then_execute_in_that_order() {
+        let calls = calls_for(false);
+        assert_eq!(calls.len(), 2);
+        // Order is the whole point: reversed, the execute call would target an
+        // address with no contract at it and the transaction would revert after the
+        // sponsor had already committed to the fee.
+        assert_eq!(calls[0].to, UDC_MAINNET, "deploy must be first");
+        assert_eq!(
+            calls[0].selector,
+            get_selector_from_name(UDC_DEPLOY_CONTRACT_SELECTOR).unwrap()
+        );
+        assert_eq!(
+            calls[1].to,
+            buzz_core::starknet_account::account_address(class_hash(), PUBKEY).unwrap(),
+            "execute must target the account the deploy just created"
+        );
+    }
+
+    #[test]
+    fn the_deploy_call_creates_the_account_the_execute_call_targets() {
+        // The two calls must agree, or the multicall deploys one account and calls
+        // another. Recompute the deployed address from the deploy calldata itself.
+        let calls = calls_for(false);
+        let d = &calls[0].calldata;
+        let recomputed =
+            starknet_core::utils::get_contract_address(d[1], d[0], &d[4..], Felt::ZERO);
+        assert_eq!(recomputed, calls[1].to);
+    }
+
+    #[test]
+    fn the_signed_payload_is_passed_through_unaltered() {
+        // The sponsor must not be able to change what executes. Whatever the user
+        // signed is what goes on the wire.
+        let exec = an_execution();
+        let sig = a_signature();
+        let calls = calls_for(true);
+        assert_eq!(
+            calls[0].calldata,
+            buzz_core::outside_execution::execute_from_outside_calldata(&exec, &sig)
+        );
+    }
+
+    #[test]
+    fn a_plan_whose_address_does_not_match_the_pubkey_is_declined() {
+        // Defence in depth against a plan built elsewhere: this is the last point
+        // before money is spent.
+        let forged = SponsorPlan::ExecuteOnly {
+            address: Felt::from(0xdead_u32),
+        };
+        assert!(matches!(
+            build_atomic_calls(
+                &forged,
+                UDC_MAINNET,
+                class_hash(),
+                PUBKEY,
+                &an_execution(),
+                &a_signature()
+            ),
+            Err(SponsorError::Declined(_))
+        ));
+    }
+
+    #[test]
+    fn the_udc_default_is_the_documented_address() {
+        // Pinned so a typo cannot silently redirect deployments. Provenance and the
+        // limits of that verification are on the constant itself.
+        assert_eq!(
+            UDC_MAINNET,
+            Felt::from_hex_unchecked(
+                "0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf"
+            )
+        );
     }
 }
