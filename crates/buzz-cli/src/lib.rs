@@ -198,7 +198,7 @@ enum Cmd {
     /// Look up users and manage profiles and presence
     #[command(subcommand)]
     Users(UsersCmd),
-    /// Publish and read NIP-SW Starknet wallet bindings
+    /// Derive and deploy your Nostr-key-controlled Starknet account
     #[command(subcommand)]
     Wallet(WalletCmd),
     /// Create, trigger, and manage workflows
@@ -734,73 +734,6 @@ pub enum ReactionsCmd {
 
 #[derive(Subcommand)]
 pub enum WalletCmd {
-    /// Print the SNIP-12 document to sign with your Starknet account
-    ///
-    /// Pass the same --signed-at to `publish`: the relay re-derives the message
-    /// hash from it, so a different timestamp yields a different message and the
-    /// attestation is rejected.
-    Message {
-        /// Starknet account contract address, felt hex (0x-prefixed)
-        #[arg(long)]
-        address: String,
-        /// Starknet chain id short string, e.g. SN_MAIN or SN_SEPOLIA
-        #[arg(long)]
-        chain: String,
-        /// Unix seconds to bind into the message (default: now)
-        #[arg(long)]
-        signed_at: Option<u64>,
-        /// Derive for this pubkey (32-byte hex) instead of your own identity.
-        ///
-        /// Runs fully offline: no relay, and no BUZZ_PRIVATE_KEY needed, since
-        /// only the public key goes into the message.
-        #[arg(long)]
-        pubkey: Option<String>,
-        /// Print only the SNIP-12 typed_data object, ready to paste into a wallet.
-        ///
-        /// The default output wraps it with the derived hash and signed_at for
-        /// reference; a wallet must receive the bare object.
-        #[arg(long)]
-        typed_data_only: bool,
-    },
-    /// Publish a wallet binding attested by your Starknet account
-    Publish {
-        /// Starknet account contract address, felt hex (0x-prefixed)
-        #[arg(long)]
-        address: String,
-        /// Starknet chain id short string, e.g. SN_MAIN
-        #[arg(long)]
-        chain: String,
-        /// Signature felt, repeat once per felt in signer order
-        #[arg(long)]
-        signature: Vec<String>,
-        /// The exact --signed-at value used with `wallet message`
-        #[arg(long)]
-        signed_at: u64,
-        /// Account contract class hash, felt hex. Optional
-        #[arg(long)]
-        class_hash: Option<String>,
-        /// Signature scheme the account validates with
-        #[arg(long, default_value = "stark")]
-        signer_scheme: String,
-    },
-    /// Read bindings published by a pubkey (defaults to your own)
-    Get {
-        /// Author pubkey, 32-byte hex. Defaults to your own identity
-        #[arg(long)]
-        pubkey: Option<String>,
-        /// Restrict to one chain id
-        #[arg(long)]
-        chain: Option<String>,
-    },
-    /// Reverse lookup: which identities claim a given account address
-    Lookup {
-        /// Starknet account contract address, felt hex (0x-prefixed)
-        #[arg(long)]
-        address: String,
-        /// Starknet chain id short string, e.g. SN_MAIN
-        #[arg(long)]
-        chain: String,
-    },
     /// Deploy your Nostr-controlled Starknet account
     ///
     /// The account pays its own deployment fee, so the derived address must be
@@ -1893,19 +1826,6 @@ async fn run(cli: Cli) -> Result<(), CliError> {
             PackCmd::Validate { path } => commands::pack::cmd_validate(path),
             PackCmd::Inspect { path } => commands::pack::cmd_inspect(path),
         };
-    }
-
-    // `wallet message --pubkey` is local-only: it derives a SNIP-12 document
-    // from a public key, so it must not require a private key to be present.
-    if let Cmd::Wallet(WalletCmd::Message {
-        address,
-        chain,
-        signed_at,
-        pubkey: Some(pubkey),
-        typed_data_only,
-    }) = &cli.command
-    {
-        return commands::wallet::cmd_message(pubkey, address, chain, *signed_at, *typed_data_only);
     }
 
     // `wallet class-hash` reads a local file, and `wallet address --pubkey`

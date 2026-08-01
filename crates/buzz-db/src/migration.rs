@@ -562,9 +562,18 @@ mod tests {
         migrations.sort_by_key(|migration| migration.version);
 
         // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 26 migrations; this
-        // fork adds 0027 (NIP-SW wallet-binding search exclusion) and 0028 (its
-        // 30178 -> 30900 kind move), so the count is 28 here. 0027 landed without
+        // fork adds 0027 and 0028, so the count is 28 here. 0027 landed without
         // bumping this, which left the assertion failing on main.
+        //
+        // Both belong to the NIP-SW wallet binding, which this fork has since
+        // removed in favour of the Nostr key controlling the Starknet account
+        // directly. They are kept regardless: they have already run on live
+        // databases and sqlx checksums applied migrations, so deleting them breaks
+        // startup validation. What they leave behind — a `search_tsv` expression
+        // excluding a kind nobody publishes any more — is inert, and unwinding it
+        // would rewrite a generated column across the whole events table for no
+        // functional gain. Do not renumber or delete; add a follow-on if it ever
+        // needs to change.
         assert_eq!(migrations.len(), 28);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");

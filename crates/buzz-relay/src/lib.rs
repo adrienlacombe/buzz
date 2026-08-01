@@ -36,8 +36,6 @@ pub mod push_runtime;
 /// Axum router construction.
 pub mod router;
 /// Shared application state.
-/// NIP-SW wallet-binding attestation verification against Starknet RPC.
-pub mod starknet_verify;
 pub mod state;
 pub mod storage_sweep;
 /// Subscription registry with (channel, kind) fan-out index.

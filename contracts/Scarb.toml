@@ -3,7 +3,7 @@ name = "buzz_starknet"
 version = "0.1.0"
 edition = "2024_07"
 license = "Apache-2.0"
-description = "Nostr-key-controlled Starknet accounts for Buzz (NIP-SW / BIP-340)"
+description = "Nostr-key-controlled Starknet accounts for Buzz (BIP-340)"
 
 [dependencies]
 starknet = "2.18.0"

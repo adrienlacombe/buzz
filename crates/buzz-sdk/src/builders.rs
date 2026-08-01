@@ -11,8 +11,8 @@ use buzz_core::{
         KIND_GIT_STATUS_CLOSED, KIND_GIT_STATUS_DRAFT, KIND_GIT_STATUS_MERGED,
         KIND_GIT_STATUS_OPEN, KIND_IA_ARCHIVE_REQUEST, KIND_IA_UNARCHIVE_REQUEST,
         KIND_MODERATION_BAN, KIND_MODERATION_RESOLVE_REPORT, KIND_MODERATION_TIMEOUT,
-        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE,
-        KIND_STARKNET_WALLET_BINDING, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+        KIND_MODERATION_UNBAN, KIND_MODERATION_UNTIMEOUT, KIND_PRESENCE_UPDATE, KIND_USER_STATUS,
+        KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
     },
     observer::{
         content_looks_like_nip44, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -1836,30 +1836,6 @@ pub fn build_unarchive_identity_request(
             .tags(tags)
             .allow_self_tagging(),
     )
-}
-
-/// NIP-SW: build a Starknet wallet binding (`kind:30900`, addressable by
-/// `(pubkey, kind, chain_id)`). Replaces the caller's prior binding for that
-/// chain under NIP-01 last-write-wins.
-///
-/// `signature` is produced by the caller's Starknet account over the SNIP-12
-/// document from [`buzz_core::snip12::BindingMessage`]. `signed_at` MUST be the
-/// same value used to derive that document — the relay re-derives the hash and a
-/// mismatch is rejected.
-///
-/// The payload carries no message hash by design: see
-/// [`buzz_core::wallet_binding::Attestation`].
-pub fn build_wallet_binding(
-    binding: &buzz_core::wallet_binding::WalletBinding,
-) -> Result<EventBuilder, SdkError> {
-    binding
-        .validate()
-        .map_err(|e| SdkError::InvalidInput(e.to_string()))?;
-    let i_value = buzz_core::wallet_binding::i_tag_value(&binding.chain_id, &binding.address);
-    let tags = vec![tag(&["d", &binding.chain_id])?, tag(&["i", &i_value])?];
-    let content =
-        serde_json::to_string(binding).map_err(|e| SdkError::InvalidInput(e.to_string()))?;
-    Ok(EventBuilder::new(Kind::Custom(KIND_STARKNET_WALLET_BINDING as u16), content).tags(tags))
 }
 
 #[cfg(test)]

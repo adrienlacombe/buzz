@@ -618,32 +618,6 @@ pub const KIND_GIT_STATUS_DRAFT: u32 = 1633;
 /// announcement, never a project. See `docs/nips/NIP-MP.md`.
 pub const KIND_PROJECT: u32 = 30621;
 
-// FORK-LOCAL PATCH (adrienlacombe/buzz): fork-reserved kinds, 30900–30999.
-//
-// Kept here rather than beside upstream's 30174–30178 cluster on purpose. That
-// cluster is where upstream adds new parameterized-replaceable kinds, so a fork
-// constant sitting in it collides on merge — which is exactly what happened when
-// upstream shipped `KIND_TEAM_CATALOG = 30178` (#3358) onto the integer this
-// binding used to hold. Upstream keeps 30178; the fork moved into its own block.
-
-/// NIP-SW: Starknet wallet binding (parameterized replaceable, self-authored).
-///
-/// Links a Nostr identity to a Starknet account contract, addressed by
-/// `(pubkey, kind, d_tag)` where `d_tag` is the Starknet chain id short string
-/// (e.g. `SN_MAIN`) — one current binding per author per chain under NIP-01
-/// last-write-wins.
-///
-/// The event's own signature proves only that the author *claims* the address,
-/// which is spoofable. The payload therefore carries a Starknet-side
-/// attestation: a signature produced by the account itself over the author's
-/// pubkey. A conforming relay verifies it on-chain at ingest and rejects the
-/// event on failure, so a stored binding is an attested one. See
-/// `docs/nips/NIP-SW.md` and [`crate::wallet_binding`].
-///
-/// This kind never carries private key material. The Nostr identity key must
-/// never be the account's signer — see the spec's security considerations.
-pub const KIND_STARKNET_WALLET_BINDING: u32 = 30900;
-
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -668,7 +642,6 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PERSONA,
     KIND_TEAM,
     KIND_MANAGED_AGENT,
-    KIND_STARKNET_WALLET_BINDING,
     KIND_TEAM_CATALOG,
     KIND_REPORT,
     KIND_PRODUCT_FEEDBACK,
@@ -876,8 +849,6 @@ const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 3062
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
-                                                                         // FORK-LOCAL PATCH (adrienlacombe/buzz): keeps the fork's reserved block addressable.
-const _: () = assert!(is_parameterized_replaceable(KIND_STARKNET_WALLET_BINDING)); // 30900 ∈ 30000–39999
 
 // Compile-time: NIP-34 parameterized replaceable kinds are in the correct range.
 const _: () = assert!(

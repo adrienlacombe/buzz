@@ -171,9 +171,7 @@ place.
 | `.github/workflows/upstream-sync.md` + `.lock.yml` | new | The agentic (02:00) sync stage. Edit the `.md` and run `gh aw compile upstream-sync`; the body is **not** inlined into the `.lock.yml`, which stores only a `body_hash`, so a body-only edit shows up as a one-line lock diff |
 | `.github/workflows/upstream-sync-merge.yml` | new | The deterministic (01:30) sync stage — the one that preserves the merge parent. Plain git, no AI. Optional `SYNC_PUSH_TOKEN` secret: a branch pushed with `GITHUB_TOKEN` does not start new workflow runs, so set a PAT if CI stops firing on sync PRs |
 | `.github/workflows/upstream-sync-ci-status.yml` | new | Labels an open sync PR `sync-ci-green`/`sync-ci-red` once checks settle, and re-requests the Copilot review that gh-aw's `reviewers:` fails to attach. Deliberately does not merge |
-| `crates/buzz-relay/src/handlers/ingest.rs`, `crates/buzz-sdk/src/builders.rs` | NIP-SW Starknet wallet binding (`KIND_STARKNET_WALLET_BINDING`, **kind:30900** — was 30178, see [Fork-local event kinds](#fork-local-event-kinds)) | Fork-only feature woven into upstream files: the ingest-time on-chain attestation check (which cannot move to `handle_side_effects`, since those run after storage — too late to reject) and the SDK builder. Real divergence in files upstream edits often — `ingest.rs` conflicted three ways in the 2026-07-31 sync, all keep-both |
-| `crates/buzz-core/src/kind.rs` | `KIND_STARKNET_WALLET_BINDING` + its `is_parameterized_replaceable` assertion, in a fork-local block after the NIP-34 git kinds | Deliberately *not* beside the upstream `30174`–`30178` cluster. See [Fork-local event kinds](#fork-local-event-kinds) |
-| `migrations/0027_wallet_binding_fts.sql`, `0028_wallet_binding_fts_kind_move.sql` | new | NIP-SW search exclusion (`0027`) and its re-point after the 30178 → 30900 move (`0028`). Additive files, so they never conflict — but `0028` exists only because `0027`'s kind literal could not be edited (sqlx checksums). **Never edit an applied migration**; add a follow-on |
+| `migrations/0027_wallet_binding_fts.sql`, `0028_wallet_binding_fts_kind_move.sql` | new, and **kept after the feature was removed** | Search exclusions for the withdrawn NIP-SW wallet binding. They have already run on live databases and sqlx checksums applied migrations, so deleting them breaks startup validation. What they leave behind — a `search_tsv` expression excluding a kind nobody publishes — is inert, and unwinding it would rewrite a generated column across the whole events table for nothing. **Never edit or delete an applied migration**; add a follow-on |
 | `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 28, not upstream's 26 | Counts embedded migrations, so it moves whenever the fork adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. A one-integer conflict on every upstream migration — take upstream's count and add the fork's two |
 | `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name. Sets `signingIdentity: "-"` in its inline config and runs **without** `--no-sign`, which would silently discard it; asserts the bundle signature of the `.app` inside the mounted DMG |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
@@ -266,68 +264,66 @@ a case it considered.
 
 ### Fork-local event kinds
 
-**Kinds `30900`–`30999` are reserved for this fork.** Every fork-only event kind
-belongs in that block. Upstream's parameterized-replaceable kinds cluster at
-`30174`–`30178` and grow upward, so anything the fork places near them will be
-claimed sooner or later.
+**There are currently none, and `crates/buzz-core/src/kind.rs` is byte-identical to
+upstream.** That is worth keeping: `kind.rs` is a file upstream edits constantly, so
+zero divergence there means zero conflicts.
 
-That is not hypothetical, and it has already happened once. The fork put NIP-SW's
-Starknet wallet binding at `30178`; upstream then shipped `KIND_TEAM_CATALOG =
-30178` (#3358), and the resulting collision was two unrelated schemas on one
-integer in the same crate — `ingest_event_inner` would run both the on-chain
-attestation verifier and `validate_team_catalog_envelope` on every such event, so
-one always rejects the other's traffic. Text merging cannot fix that; the number
-has to move.
+**Kinds `30900`–`30999` stay reserved for this fork** if one is ever needed again.
+Upstream's parameterized-replaceable kinds cluster at `30174`–`30178` and grow
+upward, so a fork constant placed near them gets claimed sooner or later. Put a new
+fork kind in the reserved block, not next to the upstream kind it relates to.
 
-**The rule when upstream claims a kind the fork already uses:** upstream keeps the
-integer, the fork's constant moves into the reserved block. Keep both constants and
-both behaviours — never resolve a kind collision by picking a side.
+The history is worth keeping because it cost real work twice over. The fork put
+NIP-SW's Starknet wallet binding at `30178`; upstream then shipped
+`KIND_TEAM_CATALOG = 30178` (#3358), and the collision was two unrelated schemas on
+one integer in the same crate — `ingest_event_inner` ran both the attestation
+verifier and `validate_team_catalog_envelope` against every such event, so one
+always rejected the other's traffic. Text merging cannot fix that. The rule that
+came out of it: **upstream keeps the contested integer, the fork moves.** The
+binding moved to `30900` in PR #9, and the whole feature was withdrawn afterwards in
+favour of the Nostr key controlling a Starknet account directly.
 
-**That move landed in the 2026-07-31 sync (PR #9).** `30178` is upstream's
-team catalog; `KIND_STARKNET_WALLET_BINDING` is **`30900`**. The constant also
-moved *position* in `kind.rs` — out of upstream's `30174`–`30178` cluster and into
-a marked fork-local block after the NIP-34 git kinds, because that cluster is
-exactly where upstream adds new parameterized-replaceable kinds. Leaving a fork
-constant inside it re-creates this conflict on every such addition. **Put new
-fork-local kinds in that block, not next to the upstream kind they relate to.**
+Three things generalise from it, for whenever a fork kind reappears:
 
-**That placement stops integer collisions, not text conflicts — expect a routine
-one there and do not read it as a collision.** The fork block sits at the end of
-`kind.rs`'s constant list, and that is also where upstream appends, so both sides
-insert at the same anchor. The 2026-08-01 sync hit exactly this when upstream
-added `KIND_PROJECT = 30621` (NIP-MP, #3171): a three-way conflict on adjacent
-lines between two kinds that share no integer and no schema. **The resolution is
-keep-both, upstream's constant first in its natural position and the fork block
-after it** — no renumber, no migration, no `ALL_KINDS` or assertion edit beyond
-what each side already brought. Check the integers before reaching for the
-renumber procedure above; it applies only when the *values* actually coincide.
+1. **Moving a kind is a wire-format change.** Stored events are not rewritten and
+   pinned clients stop matching. Check for existing events first.
+2. **It may be a search-exclusion change too, which is the easy miss.** An FTS
+   exclusion is a `kind = …` literal baked into a `search_tsv` generated column.
+   Applied migrations never re-run and `sqlx::migrate!` validates their checksums,
+   so the original file cannot be edited — that fails relay startup on a version
+   mismatch. The renumber needed a *follow-on* migration (`0028`) to peel `0027`'s
+   wrapper and re-wrap on the new integer. Any future move carrying an exclusion
+   needs the same.
+3. **Adding a migration means bumping `migrations.len()`** in
+   `buzz-db/src/migration.rs`. `0027` did not, and left that assertion failing on
+   `main`.
 
-Moving a kind is a **wire-format change**: events already stored under the old
-integer are not rewritten, and clients pinned to it stop matching. Check for
-existing events before moving one that has been live.
-
-It is also a **search-exclusion change**, which is the part that is easy to miss.
-The NIP-SW full-text exclusion is a `kind = …` literal baked into a `search_tsv`
-generated column by migration `0027`. Applied migrations never re-run and
-`sqlx::migrate!` validates their checksums, so the old file cannot be edited —
-editing it fails relay startup with a version mismatch. The renumber therefore
-needed a *follow-on* migration (`0028`) that peels `0027`'s wrapper and re-wraps on
-the new integer. Without it both halves break at once: addresses at the new kind
-become searchable, and upstream's events at the old integer get excluded instead.
-**Any future kind move carrying an FTS exclusion needs the same follow-on.**
-
-When adding a fork-local kind, the checklist is the constant in
+The full checklist for adding a fork-local kind: the constant in
 `buzz-core/src/kind.rs`, its `is_parameterized_replaceable` assertion,
-`SHARED_GATED_KINDS` if it is shareable, the relay's `required_scope_for_kind` and
-ingest branch, the SDK builder in `buzz-sdk/src/builders.rs`, any `buzz-cli`
-subcommand, and `desktop/src/shared/constants/kinds.ts` plus
-`mobile/lib/shared/relay/nostr_models.dart`, which must stay in sync.
+`SHARED_GATED_KINDS` if shareable, the relay's `required_scope_for_kind` and ingest
+branch, the SDK builder in `buzz-sdk/src/builders.rs`, any `buzz-cli` subcommand,
+and `desktop/src/shared/constants/kinds.ts` plus
+`mobile/lib/shared/relay/nostr_models.dart`, which must stay in sync. The assertion
+and the migration count are the two that were missed last time.
 
-Two items on that checklist were missed when the wallet binding first landed, so
-check them explicitly: the `is_parameterized_replaceable` assertion (added in PR
-#9), and — if the kind gets its own migration — the `migrations.len()` assertion in
-`buzz-db/src/migration.rs`, which `0027` left stale at upstream's count and which
-therefore failed on `main` until PR #9. Adding any migration means bumping it.
+### Starknet accounts
+
+This fork ships **one** Starknet model: `contracts/src/account.cairo`, an account
+whose owner is a Nostr x-only pubkey, validating BIP-340 Schnorr signatures on
+chain. The Nostr key *is* the account signer.
+
+The alternative — NIP-SW, where an external wallet held the funds and a kind:30900
+event carried an on-chain attestation binding it to a Nostr pubkey — was
+implemented, deployed as far as relay-side ingest verification, and then removed
+entirely. Do not reintroduce it piecemeal; `docs/nips/NIP-SW.md`, `wallet_binding`,
+`snip12`, `starknet_verify` and the `wallet message`/`publish`/`get`/`lookup`
+subcommands are all gone.
+
+**The cost of the model that remains is per-transaction and does not amortise**:
+~0.78 STRK of BIP-340 verification before a transaction does anything useful,
+measured on mainnet. See [`contracts/DEPLOYMENTS.md`](contracts/DEPLOYMENTS.md) for
+the numbers, the declared class hash, and why address derivation is confirmed by
+the sequencer without a deployment having happened.
 
 ### Repo settings (no file changes — preferred mechanism)
 

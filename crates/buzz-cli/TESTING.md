@@ -482,56 +482,12 @@ buzz notes get --name dco-check   # exits non-zero: not found
 buzz notes rm --name does-not-exist   # exits non-zero
 ```
 
----
-
-### 6.13 Wallet Bindings (NIP-SW Starknet, kind:30900)
-
-`wallet message` is local-only — no relay, no chain. The other three need a
-relay, and `publish` additionally needs the relay to have
-`BUZZ_STARKNET_RPC_<CHAIN_ID>` configured: verification happens at ingest and
-**fails closed**, so an unconfigured relay rejects every binding.
-
-```bash
-# 1. Local: print the SNIP-12 document to sign. Note the signed_at it echoes.
-buzz wallet message --address 0x04a5... --chain SN_SEPOLIA
-
-# 1b. Fully offline — no relay and no BUZZ_PRIVATE_KEY, since only the public
-#     key enters the message. Useful when the signing machine holds no secret.
-buzz wallet message --address 0x04a5... --chain SN_SEPOLIA --pubkey <64-hex>
-
-# 2. Sign the `typed_data` object with the account (Argent/Braavos), then
-#    publish with the SAME --signed-at. A different value derives a different
-#    message hash and the relay rejects it.
-buzz wallet publish --address 0x04a5... --chain SN_SEPOLIA \
-  --signed-at 1785400000 --signature 0xaa --signature 0xbb \
-  --signer-scheme secp256k1-ecdsa
-
-# 3. Forward lookup: bindings you published.
-buzz wallet get
-buzz wallet get --chain SN_SEPOLIA
-buzz wallet get --pubkey <other-hex>
-
-# 4. Reverse lookup: which identities claim an address.
-buzz wallet lookup --address 0x04a5... --chain SN_SEPOLIA
-```
-
-Worth checking explicitly:
-
-- Republishing for the same chain **replaces** (NIP-33 LWW keyed by
-  `(pubkey, 30900, chain_id)`); a second chain coexists rather than replacing.
-- A wrong `--signed-at` is rejected by the relay, not accepted silently.
-- `wallet lookup` may legitimately return **several** bindings from different
-  pubkeys for one address, and that is not a bug — on a conforming relay each was
-  attested by that account.
-- Bindings never appear in `messages search` results (migration 0027).
-
-
-### 6.14 Nostr-Controlled Account Address (contracts/)
+### 6.13 Nostr-Controlled Account Address (contracts/)
 
 Both commands are local — no relay, no chain, and `--pubkey` needs no
-`BUZZ_PRIVATE_KEY`. This derives the account controlled by the **Nostr key**,
-which is a different account from any wallet-managed one a NIP-SW binding points
-at; do not confuse the two addresses.
+`BUZZ_PRIVATE_KEY`. This derives the account controlled directly by the **Nostr
+key**, which validates BIP-340 signatures on-chain. It is the only Starknet
+account model this fork supports.
 
 ```bash
 # Class hash of the current build. Recompute after any contract change — a stale

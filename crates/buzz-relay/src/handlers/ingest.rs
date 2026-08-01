@@ -29,12 +29,11 @@ use buzz_core::kind::{
     KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER, KIND_NIP43_LEAVE_REQUEST,
     KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST, KIND_PRESENCE_UPDATE,
     KIND_PRODUCT_FEEDBACK, KIND_PROFILE, KIND_PROJECT, KIND_REACTION, KIND_READ_STATE, KIND_REPORT,
-    KIND_STARKNET_WALLET_BINDING, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED,
-    KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED,
-    KIND_STREAM_MESSAGE_SCHEDULED, KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM,
-    KIND_TEAM_CATALOG, KIND_TEXT_NOTE, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
-    RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER,
-    RELAY_ADMIN_SET_WORKSPACE_PROFILE,
+    KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED, KIND_STREAM_MESSAGE_DIFF,
+    KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED, KIND_STREAM_MESSAGE_SCHEDULED,
+    KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM, KIND_TEAM_CATALOG, KIND_TEXT_NOTE,
+    KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER,
+    RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_core::verification::verify_event;
@@ -215,7 +214,6 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_TEXT_NOTE | KIND_LONG_FORM => Ok(Scope::MessagesWrite),
         KIND_CONTACT_LIST | KIND_READ_STATE | KIND_USER_STATUS | KIND_AGENT_ENGRAM
         | KIND_EVENT_REMINDER | KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT
-        | KIND_STARKNET_WALLET_BINDING
         | KIND_TEAM_CATALOG
         | super::push_lease::KIND_PUSH_LEASE => Ok(Scope::UsersWrite),
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
@@ -419,9 +417,6 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             | KIND_AGENT_ENGRAM
             // NIP-ER event reminders are addressed by (pubkey, kind, d_tag); never channel-scoped.
             | KIND_EVENT_REMINDER
-            // NIP-SW wallet bindings are addressed by (pubkey, kind, chain id); a
-            // wallet is the author's, never a channel's.
-            | KIND_STARKNET_WALLET_BINDING
             // Agent profile (10100): user-owned replaceable, keyed by pubkey.
             | KIND_AGENT_PROFILE
             // NIP-AP: persona definitions (30175): owner-authored, keyed by (pubkey, kind, d_tag).
@@ -2412,41 +2407,6 @@ async fn ingest_event_inner(
     if kind_u32 == KIND_PERSONA {
         validate_persona_envelope(&event)
             .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
-    }
-
-    // NIP-SW: verify the wallet-binding attestation on-chain *before* storage.
-    //
-    // This cannot move to handle_side_effects(): those run after the event is
-    // stored, which is too late to reject. A stored binding must already be an
-    // attested one, or consumers cannot rely on "stored implies attested".
-    //
-    // Shape validation runs first so a malformed payload is rejected without an
-    // RPC round trip.
-    if kind_u32 == KIND_STARKNET_WALLET_BINDING {
-        let binding = buzz_core::wallet_binding::WalletBinding::from_event(&event)
-            .map_err(|e| IngestError::Rejected(format!("invalid: {e}")))?;
-        // The author pubkey comes from the signed event, never the payload —
-        // that is what makes the attestation directional. A payload-supplied
-        // pubkey would let anyone attest on someone else's behalf.
-        let author_pubkey = event.pubkey.to_hex();
-        state
-            .starknet_verifier
-            .verify(&binding, &author_pubkey)
-            .await
-            .map_err(|e| {
-                // Fail closed. Transport errors, timeouts, and unconfigured
-                // chains all reject rather than storing unverified. Logged at
-                // warn because an operator seeing a burst of these has an RPC
-                // problem, not an attack.
-                warn!(
-                    event_id = %event_id_hex,
-                    chain_id = %binding.chain_id,
-                    address = %binding.address,
-                    error = %e,
-                    "NIP-SW wallet binding attestation rejected"
-                );
-                IngestError::Rejected(format!("invalid: {e}"))
-            })?;
     }
 
     if kind_u32 == KIND_TEAM_CATALOG {

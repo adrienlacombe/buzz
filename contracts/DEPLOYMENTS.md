@@ -40,10 +40,11 @@ useful** — roughly 1,171x the cheap reject path in the same contract, because
 BIP-340 needs two secp256k1 scalar multiplications plus a tagged SHA-256 where a
 Stark-curve account uses a native builtin.
 
-Ten transactions is about 8 STRK in pure signature overhead. Price this against
-the alternative before building on it: NIP-SW
-([`docs/nips/NIP-SW.md`](../docs/nips/NIP-SW.md)) gives attested wallet discovery
-with an external wallet holding the funds, at no per-transaction cost.
+Ten transactions is about 8 STRK in pure signature overhead. This is the accepted
+cost of the design: the fork deliberately dropped the alternative (NIP-SW attested
+wallet binding, which put an external wallet in charge at no per-transaction cost)
+in favour of the Nostr key controlling the account directly. Budget accordingly —
+the overhead is per transaction and does not amortise.
 
 ### Derivation confirmed by the sequencer (no deployment needed)
 
