@@ -31,7 +31,7 @@ pub fn relay_ws_url() -> String {
         // defaults to ws://localhost:3000, which the allowlist then rejects,
         // producing a client that cannot connect at all. Returns None in debug so
         // local development keeps the loopback default below.
-        .or_else(crate::relay_allowlist::default_relay_url)
+        .or_else(allowlist::default_relay_url)
         .unwrap_or_else(|| DEFAULT_RELAY_WS_URL.to_string())
 }
 
@@ -537,6 +537,14 @@ pub struct AgentProfileInfo {
 }
 
 // ── Signed-event submission ─────────────────────────────────────────────────
+
+// FORK-LOCAL PATCH (adrienlacombe/buzz): single-relay host allowlist, declared
+// as a submodule of `relay` rather than at the crate root. Upstream's lib.rs
+// sits at exactly the 1000-line desktop file-size ratchet limit, so a fork-local
+// `mod` line there fails `just desktop-check` the moment upstream adds anything.
+// Keeping the declaration here costs lib.rs nothing and removes a permanent
+// conflict site from its sorted module list.
+pub mod allowlist;
 
 mod submit;
 pub use submit::{

@@ -130,8 +130,8 @@ async fn open_connection(
     // client. Every relay session — community add, stored communities, deep
     // links, the read-only observer, reconnects — funnels through here, so this
     // is the one place a host restriction cannot be bypassed from the UI.
-    // See relay_allowlist.rs for why it is a config lock, not a security control.
-    crate::relay_allowlist::ensure_relay_allowed(url)?;
+    // See relay/allowlist.rs for why it is a config lock, not a security control.
+    crate::relay::allowlist::ensure_relay_allowed(url)?;
 
     let connect_cancel = manager.connect_cancel.lock().await.clone();
     let (socket, _) = tokio::select! {
