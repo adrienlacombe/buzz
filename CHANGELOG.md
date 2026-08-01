@@ -1491,3 +1491,44 @@ purposes and re-prompt for, or lose, access to the stored identity; the app-data
 `identity.key` fallback is what should carry it through. Updating **from**
 `v0.0.0-forktest.6` **to** this release is the first opportunity to find out — check
 that the account survives rather than assuming it did.
+
+## v0.5.100
+
+**This release separates the app's state from upstream Buzz. Read the next section
+before updating.**
+
+Installed side by side, this fork and upstream Buzz shared one app-data directory,
+one OS keychain entry, and one URL scheme — the same account and settings, with
+`buzz://` links opening whichever app macOS picked. All three now belong to this app
+alone:
+
+- App-data directory is keyed to `app.bitcoinmarkets.desktop`, not
+  `xyz.block.buzz.app`.
+- The OS keychain entry is `bitcoinmarkets-desktop`. This one is a constant in the
+  source rather than derived from the bundle identifier, so it had to move
+  separately — changing only the identifier would have split the data directory
+  while leaving both apps writing the same keychain entry.
+- `bitcoinmarkets://` is the registered scheme. `buzz://` links are still **accepted**
+  wherever they are parsed, because such links already exist in message history; only
+  newly generated links use the new scheme. The web invite page emits the new scheme
+  too, so "Accept invite" opens this app rather than upstream Buzz.
+
+Verified in the built bundle before release: `CFBundleIdentifier` is
+`app.bitcoinmarkets.desktop`, `CFBundleURLSchemes` is `[bitcoinmarkets]`, and the
+ad-hoc bundle signature validates.
+
+### Your account will look empty after updating
+
+There is **no migration**, deliberately. The previous identity, settings and window
+state remain on disk under the old identifier — nothing is deleted — but this build
+reads a different directory and a different keychain entry, so it starts empty.
+
+On macOS the old data is at:
+
+```
+~/Library/Application Support/xyz.block.buzz.app
+```
+
+Recovering it means writing the migration that was intentionally left out; the hook
+is `legacy_app_data_dir` in `desktop/src-tauri/src/migration.rs`. Back that directory
+up before updating if the identity matters.
