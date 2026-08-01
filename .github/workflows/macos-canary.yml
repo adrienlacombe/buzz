@@ -120,13 +120,25 @@ jobs:
           cd desktop && node scripts/set-version-from-tag.mjs "$VERSION"
           cd src-tauri && cargo update --workspace
 
+      # signingIdentity "-" is ad-hoc signing, and it is what makes the DMG
+      # launchable. Without it Tauri emits an .app with no
+      # Contents/_CodeSignature — only the linker's ad-hoc signature on the
+      # executable — and macOS rejects that as "is damaged and can't be opened",
+      # which clearing the quarantine attribute does not fix. Every canary DMG
+      # before 2026-08-01 was unlaunchable for this reason; it went unnoticed
+      # because the artifact was only ever inspected, never installed.
+      #
+      # It has to be here rather than a codesign step after the build: Tauri
+      # assembles the DMG in the same invocation, so signing afterwards would fix
+      # the .app on disk and leave the DMG carrying the unsigned copy.
       - name: Generate non-updating bundle config
         run: |
           cat > desktop/src-tauri/tauri.canary.conf.json <<'JSON'
           {
             "bundle": {
               "macOS": {
-                "minimumSystemVersion": "10.15"
+                "minimumSystemVersion": "10.15",
+                "signingIdentity": "-"
               },
               "createUpdaterArtifacts": false
             }
@@ -187,7 +199,10 @@ jobs:
           key: mesh-llama-${{ runner.os }}-metal-${{ steps.mesh_rev.outputs.rev }}
 
       - name: Build unsigned Tauri app
-        run: cd desktop && pnpm tauri build --verbose --no-sign --features mesh-llm --config src-tauri/tauri.canary.conf.json
+        # No `--no-sign`: it would skip signing entirely and silently discard the
+        # ad-hoc signingIdentity set in the config above, putting this lane straight
+        # back to shipping a DMG macOS calls damaged.
+        run: cd desktop && pnpm tauri build --verbose --features mesh-llm --config src-tauri/tauri.canary.conf.json
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
           MACOSX_DEPLOYMENT_TARGET: "10.15"
@@ -216,7 +231,13 @@ jobs:
       # ad-hoc signature, so `codesign --verify` can pass while `spctl --assess`
       # still rejects the app — ad-hoc is not a Developer ID and is not
       # notarized. Both are reported without failing the job.
-      - name: Report signing state
+      # Asserts rather than reports. This step already mounted the DMG and looked at
+      # the .app inside — the exact bytes a user double-clicks — and still every
+      # canary before 2026-08-01 shipped a bundle macOS calls damaged, because every
+      # check ended in `|| true` and `codesign -dv` reports a signature even when
+      # only the executable has one. `--deep --strict` is the check that tells them
+      # apart.
+      - name: Verify signing state
         env:
           DMG_PATH: ${{ steps.unsigned.outputs.dmg }}
         run: |
@@ -225,11 +246,32 @@ jobs:
           mkdir -p "$MOUNT"
           hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT" >/dev/null
           APP=$(find "$MOUNT" -maxdepth 1 -name '*.app' -type d | head -1)
-          echo "--- codesign -dv ---"
-          codesign -dv --verbose=2 "$APP" 2>&1 || echo "(no signature)"
+
+          echo "--- codesign -dv (expect adhoc, WITHOUT linker-signed) ---"
+          codesign -dv --verbose=2 "$APP" 2>&1 || true
+
+          # Collected rather than exited on, so the DMG is always detached below.
+          status=0
+          if [[ -z "$APP" ]]; then
+            echo "::error::no .app inside the DMG"
+            status=1
+          elif [[ ! -f "$APP/Contents/_CodeSignature/CodeResources" ]]; then
+            echo "::error::no Contents/_CodeSignature/CodeResources — the bundle was never signed, only the executable, and macOS will call this DMG damaged. Check signingIdentity in the canary config and that --no-sign is absent from the build."
+            status=1
+          elif ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+            echo "::error::bundle signature is not valid; this DMG would fail to launch"
+            status=1
+          else
+            echo "Bundle signature verified inside the DMG."
+          fi
+
+          # Informational, and expected to reject: never notarized, so a first
+          # install still needs `xattr -dr com.apple.quarantine`.
           echo "--- spctl --assess (expected to reject: not notarized) ---"
           spctl --assess --type execute --verbose=4 "$APP" 2>&1 || true
+
           hdiutil detach "$MOUNT" >/dev/null || true
+          exit $status
 
       - name: Stage unsigned DMG
         id: artifact

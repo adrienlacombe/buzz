@@ -18,6 +18,25 @@ import { resolve } from "node:path";
 // Apple code signing and notarization happen post-build via
 // block/apple-codesign-action in release.yml, so no signingIdentity is
 // emitted here and the Tauri build is invoked with --no-sign.
+//
+// FORK-LOCAL PATCH (adrienlacombe/buzz): BUZZ_MACOS_ADHOC_SIGN=1 additionally
+// emits bundle.macOS.signingIdentity = "-", i.e. ad-hoc signing.
+//
+// Needed because a lane with no Apple identity produces an .app with no
+// Contents/_CodeSignature at all — only the linker's ad-hoc signature on the
+// executable. macOS reads that mismatch as corruption and refuses the app with
+// "is damaged and can't be opened", which no amount of clearing the quarantine
+// attribute fixes. Every macOS build this fork had ever produced was affected,
+// release and canary alike; it went unnoticed until someone installed one.
+//
+// It must be config rather than a `codesign` step after the build, because Tauri
+// assembles the DMG inside the same `tauri build` invocation. Signing afterwards
+// would fix the .app on disk while leaving the DMG — the thing users download —
+// carrying the unsigned copy.
+//
+// Off by default so the two block/buzz lanes are untouched: they must reach
+// block/apple-codesign-action unsigned. Set it only where nothing else will ever
+// sign the bundle.
 
 const outputConfigPath = resolve(
   process.cwd(),
@@ -37,10 +56,14 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+// FORK-LOCAL PATCH (adrienlacombe/buzz): see the header note.
+const adhocSign = process.env.BUZZ_MACOS_ADHOC_SIGN === "1";
+
 const releaseConfig = {
   bundle: {
     macOS: {
       minimumSystemVersion: "10.15",
+      ...(adhocSign ? { signingIdentity: "-" } : {}),
     },
     createUpdaterArtifacts: true,
   },
@@ -53,6 +76,11 @@ const releaseConfig = {
 };
 
 console.log(`Updater enabled -> ${updaterEndpoint}`);
+console.log(
+  adhocSign
+    ? "macOS bundle signing: ad-hoc (signingIdentity '-')"
+    : "macOS bundle signing: none emitted (expects a post-build signer)",
+);
 
 writeFileSync(outputConfigPath, `${JSON.stringify(releaseConfig, null, 2)}\n`);
 console.log(`Wrote ${outputConfigPath}`);

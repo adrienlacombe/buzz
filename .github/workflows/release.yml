@@ -506,6 +506,12 @@ jobs:
         env:
           BUZZ_UPDATER_PUBLIC_KEY: ${{ secrets.BUZZ_UPDATER_PUBLIC_KEY || secrets.SPROUT_UPDATER_PUBLIC_KEY }}
           BUZZ_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/download/buzz-desktop-latest/latest.json
+          # FORK-LOCAL PATCH (adrienlacombe/buzz): nothing signs this lane's bundle
+          # after the build, so Tauri has to ad-hoc sign it during bundling — before
+          # the DMG is assembled around it. Deliberately absent from the two
+          # block/buzz macOS lanes, which must reach block/apple-codesign-action
+          # unsigned, and from release-linux / release-windows where it is moot.
+          BUZZ_MACOS_ADHOC_SIGN: "1"
 
       - name: Build sidecars
         run: |
@@ -576,10 +582,16 @@ jobs:
       # step, and macos-canary.yml sets createUpdaterArtifacts: false so it never
       # wants a .sig at all.
       #
-      # Dropping the flag does not reintroduce Apple signing: no signingIdentity is
-      # configured anywhere and the runners carry no Apple identity, so Tauri skips
-      # codesigning on its own and the binary keeps the ad-hoc linker signature
-      # that lets it run on Apple Silicon.
+      # Dropping the flag does not reintroduce Apple signing. What it does enable is
+      # the ad-hoc *bundle* signature requested via BUZZ_MACOS_ADHOC_SIGN on the
+      # config step above, and that turned out to be load-bearing: without it Tauri
+      # emitted an .app with no Contents/_CodeSignature at all, only the linker's
+      # ad-hoc signature on the executable, and macOS rejected the result as
+      # "BitcoinMarkets is damaged and can't be opened" — unfixable by clearing the
+      # quarantine attribute. An earlier version of this comment asserted the linker
+      # signature "is what lets the result run on Apple Silicon at all". It is not;
+      # a signed executable is not a signed bundle. Every macOS artifact this fork
+      # produced was unlaunchable until forktest.6.
       - name: Build unsigned Tauri app
         run: cd desktop && pnpm tauri build --verbose --features mesh-llm --config src-tauri/tauri.release.conf.json
         env:
@@ -632,11 +644,39 @@ jobs:
 
       # Records what the app is and is not, so the absence of notarization is a
       # published fact rather than something a user discovers from Gatekeeper.
-      - name: Report signing state
+      # FORK-LOCAL PATCH (adrienlacombe/buzz): this step used to only *report*, with
+      # every command ending in `|| true`, and that is precisely how an unlaunchable
+      # DMG reached a published release. The diagnostic ran, printed
+      # `flags=0x20002(adhoc,linker-signed)`, and nobody could tell that was the
+      # broken state rather than the intended one. It now asserts.
+      #
+      # The bar is a valid *bundle* signature. A linker-signed executable inside a
+      # bundle with no Contents/_CodeSignature is what macOS reports as
+      # "is damaged and can't be opened", and clearing the quarantine attribute does
+      # not help. `--deep --strict` is what distinguishes the two; `codesign -dv`
+      # alone reports a signature in both cases.
+      - name: Verify signing state
         run: |
+          set -euo pipefail
           APP=$(find desktop/src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -type d | head -1)
-          echo "--- codesign -dv (expect: adhoc) ---"
-          codesign -dv --verbose=2 "$APP" 2>&1 || echo "(no signature at all)"
+          [[ -n "$APP" ]] || { echo "::error::no .app bundle found to verify"; exit 1; }
+
+          echo "--- codesign -dv (expect adhoc, WITHOUT linker-signed) ---"
+          codesign -dv --verbose=2 "$APP" 2>&1 || true
+
+          if [[ ! -f "$APP/Contents/_CodeSignature/CodeResources" ]]; then
+            echo "::error::$APP has no Contents/_CodeSignature/CodeResources — the bundle was never signed, only the executable. macOS will reject this as damaged. Is BUZZ_MACOS_ADHOC_SIGN set on the config step, and is --no-sign absent from the build?"
+            exit 1
+          fi
+
+          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+            echo "::error::bundle signature is not valid; this artifact would fail to launch"
+            exit 1
+          fi
+          echo "Bundle signature verified."
+
+          # Informational only, and expected to fail: this lane is never notarized,
+          # so a first install still needs `xattr -dr com.apple.quarantine`.
           echo "--- spctl --assess (expect: rejected, unnotarized) ---"
           spctl --assess --type execute --verbose=4 "$APP" 2>&1 || true
 
