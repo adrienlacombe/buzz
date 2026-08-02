@@ -264,11 +264,21 @@ a case it considered.
 
 ### Fork-local event kinds
 
-**There are currently none, and `crates/buzz-core/src/kind.rs` is byte-identical to
-upstream.** That is worth keeping: `kind.rs` is a file upstream edits constantly, so
-zero divergence there means zero conflicts.
+**Two: `KIND_SPONSOR_REQUEST = 30900` and `KIND_SPONSOR_RESULT = 30901`**, the
+sponsorship protocol between a client and `buzz-paymaster`. `kind.rs` was briefly
+byte-identical to upstream after NIP-SW was removed; these bring the divergence
+back, which is the price of routing sponsorship over Nostr instead of an HTTP
+endpoint on a funded service.
 
-**Kinds `30900`–`30999` stay reserved for this fork** if one is ever needed again.
+**30900 is reused deliberately.** The withdrawn wallet binding held it for a day, so
+migration `0028` already excludes 30900 from full-text search — an exclusion the
+request wants for the same reason, since its payload carries account addresses and
+calldata. Reusing the integer inherits that without another `search_tsv` rewrite
+across the whole events table. A stale binding still stored at 30900 fails sponsor
+payload validation and is ignored, so the reuse fails closed. `30901` carries only a
+status and a transaction hash, so it needs no exclusion.
+
+**Kinds `30900`–`30999` are reserved for this fork.**
 Upstream's parameterized-replaceable kinds cluster at `30174`–`30178` and grow
 upward, so a fork constant placed near them gets claimed sooner or later. Put a new
 fork kind in the reserved block, not next to the upstream kind it relates to.

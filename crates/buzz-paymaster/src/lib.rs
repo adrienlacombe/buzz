@@ -34,7 +34,8 @@
 //! behind the trait, so the policy and call construction are testable without a
 //! node and without funds.
 
-use buzz_core::outside_execution::OutsideExecution;
+use buzz_core::outside_execution::{OutsideCall, OutsideExecution};
+use buzz_core::sponsorship::SponsorRequest;
 use starknet_core::types::{Call, Felt};
 use starknet_core::utils::get_selector_from_name;
 
@@ -223,6 +224,78 @@ pub fn build_atomic_calls(
         calldata: buzz_core::outside_execution::execute_from_outside_calldata(execution, signature),
     });
     Ok(calls)
+}
+
+/// Turns a member's published request into the calls that service it.
+///
+/// This is the whole service path: parse, refuse anything that cannot succeed,
+/// derive the account, ask whether it exists, and produce the multicall. The only
+/// thing left is submission, which needs a funded signer.
+///
+/// The user's pubkey comes from the **event author**, never the payload. That is
+/// what stops one member requesting sponsorship into another member's account: the
+/// relay has already verified the event signature, so the author is attested, and
+/// the account address is derived from it rather than supplied.
+pub fn service_request(
+    chain: &impl Chain,
+    class_hash: Felt,
+    author_pubkey: &str,
+    udc: Felt,
+    request: &SponsorRequest,
+    d_tag: &str,
+) -> Result<Vec<Call>, SponsorError> {
+    request
+        .validate()
+        .map_err(|e| SponsorError::Declined(e.to_string()))?;
+    if !request.nonce_matches_d_tag(d_tag) {
+        // Replacement is keyed on the d tag while on-chain replay protection is
+        // keyed on the nonce. Allowing them to differ would let two distinct
+        // requests share one replaceable slot, so a resend could smuggle in
+        // different calls under an already-seen address.
+        return Err(SponsorError::Declined(format!(
+            "nonce {} does not match the event d tag {d_tag}",
+            request.nonce
+        )));
+    }
+
+    let felt = |field: &'static str, v: &str| -> Result<Felt, SponsorError> {
+        Felt::from_hex(v).map_err(|_| SponsorError::Declined(format!("invalid {field}: {v:?}")))
+    };
+
+    let mut calls = Vec::with_capacity(request.calls.len());
+    for c in &request.calls {
+        let mut calldata = Vec::with_capacity(c.calldata.len());
+        for d in &c.calldata {
+            calldata.push(felt("calldata", d)?);
+        }
+        calls.push(OutsideCall {
+            to: felt("call.to", &c.to)?,
+            selector: felt("call.selector", &c.selector)?,
+            calldata,
+        });
+    }
+    let execution = OutsideExecution {
+        caller: felt("caller", &request.caller)
+            .unwrap_or_else(|_| buzz_core::outside_execution::any_caller()),
+        nonce: felt("nonce", &request.nonce)?,
+        execute_after: request.execute_after,
+        execute_before: request.execute_before,
+        calls,
+    };
+    let mut signature = [Felt::ZERO; 4];
+    for (i, s) in request.signature.iter().enumerate() {
+        signature[i] = felt("signature", s)?;
+    }
+
+    let plan = plan_for(chain, class_hash, author_pubkey)?;
+    build_atomic_calls(
+        &plan,
+        udc,
+        class_hash,
+        author_pubkey,
+        &execution,
+        &signature,
+    )
 }
 
 #[cfg(test)]
@@ -462,5 +535,114 @@ mod tests {
                 "0x041a78e741e5af2fec34b695679bc6891742439f7afb8484ecd7766661ad02bf"
             )
         );
+    }
+
+    fn a_request() -> SponsorRequest {
+        SponsorRequest {
+            chain_id: "SN_MAIN".into(),
+            caller: "0x0".into(),
+            nonce: "0x2a".into(),
+            execute_after: 1_000,
+            execute_before: 2_000,
+            calls: vec![buzz_core::sponsorship::SponsorCall {
+                to: "0x1234".into(),
+                selector: "0x5678".into(),
+                calldata: vec!["0x1".into()],
+            }],
+            signature: vec!["0x1".into(), "0x2".into(), "0x3".into(), "0x4".into()],
+        }
+    }
+
+    #[test]
+    fn a_request_from_a_new_member_deploys_and_executes() {
+        let calls = service_request(
+            &FakeChain { deployed: false },
+            class_hash(),
+            PUBKEY,
+            UDC_MAINNET,
+            &a_request(),
+            "0x2a",
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].to, UDC_MAINNET);
+    }
+
+    #[test]
+    fn a_request_from_an_existing_member_only_executes() {
+        let calls = service_request(
+            &FakeChain { deployed: true },
+            class_hash(),
+            PUBKEY,
+            UDC_MAINNET,
+            &a_request(),
+            "0x2a",
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn the_account_is_derived_from_the_event_author_not_the_payload() {
+        // The payload carries no address at all, by design: the relay attests the
+        // author, so deriving from the author is what stops one member requesting
+        // sponsorship into another member's account.
+        let calls = service_request(
+            &FakeChain { deployed: true },
+            class_hash(),
+            PUBKEY,
+            UDC_MAINNET,
+            &a_request(),
+            "0x2a",
+        )
+        .unwrap();
+        assert_eq!(
+            calls[0].to,
+            buzz_core::starknet_account::account_address(class_hash(), PUBKEY).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_nonce_that_disagrees_with_the_d_tag_is_declined() {
+        let err = service_request(
+            &FakeChain { deployed: true },
+            class_hash(),
+            PUBKEY,
+            UDC_MAINNET,
+            &a_request(),
+            "0xdifferent",
+        );
+        assert!(matches!(err, Err(SponsorError::Declined(_))));
+    }
+
+    #[test]
+    fn an_invalid_request_is_declined_before_any_chain_query() {
+        // BrokenChain errors on any query, so reaching it would fail with Chain
+        // rather than Declined. Getting Declined proves validation ran first —
+        // which is the point: a bad request must not cost a round trip, let alone a
+        // fee.
+        let mut r = a_request();
+        r.calls.clear();
+        assert!(matches!(
+            service_request(&BrokenChain, class_hash(), PUBKEY, UDC_MAINNET, &r, "0x2a"),
+            Err(SponsorError::Declined(_))
+        ));
+    }
+
+    #[test]
+    fn unparseable_felts_are_declined_not_panics() {
+        let mut r = a_request();
+        r.calls[0].to = "not-a-felt".into();
+        assert!(matches!(
+            service_request(
+                &FakeChain { deployed: true },
+                class_hash(),
+                PUBKEY,
+                UDC_MAINNET,
+                &r,
+                "0x2a"
+            ),
+            Err(SponsorError::Declined(_))
+        ));
     }
 }

@@ -29,11 +29,12 @@ use buzz_core::kind::{
     KIND_NIP29_PUT_USER, KIND_NIP29_REMOVE_USER, KIND_NIP43_LEAVE_REQUEST,
     KIND_NIP65_RELAY_LIST_METADATA, KIND_PERSONA, KIND_PIN_LIST, KIND_PRESENCE_UPDATE,
     KIND_PRODUCT_FEEDBACK, KIND_PROFILE, KIND_PROJECT, KIND_REACTION, KIND_READ_STATE, KIND_REPORT,
-    KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED, KIND_STREAM_MESSAGE_DIFF,
-    KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED, KIND_STREAM_MESSAGE_SCHEDULED,
-    KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM, KIND_TEAM_CATALOG, KIND_TEXT_NOTE,
-    KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER, RELAY_ADMIN_ADD_MEMBER,
-    RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER, RELAY_ADMIN_SET_WORKSPACE_PROFILE,
+    KIND_SPONSOR_REQUEST, KIND_SPONSOR_RESULT, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_BOOKMARKED,
+    KIND_STREAM_MESSAGE_DIFF, KIND_STREAM_MESSAGE_EDIT, KIND_STREAM_MESSAGE_PINNED,
+    KIND_STREAM_MESSAGE_SCHEDULED, KIND_STREAM_MESSAGE_V2, KIND_STREAM_REMINDER, KIND_TEAM,
+    KIND_TEAM_CATALOG, KIND_TEXT_NOTE, KIND_USER_STATUS, KIND_WORKFLOW_DEF, KIND_WORKFLOW_TRIGGER,
+    RELAY_ADMIN_ADD_MEMBER, RELAY_ADMIN_CHANGE_ROLE, RELAY_ADMIN_REMOVE_MEMBER,
+    RELAY_ADMIN_SET_WORKSPACE_PROFILE,
 };
 use buzz_core::tenant::TenantContext;
 use buzz_core::verification::verify_event;
@@ -215,6 +216,12 @@ fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static s
         KIND_CONTACT_LIST | KIND_READ_STATE | KIND_USER_STATUS | KIND_AGENT_ENGRAM
         | KIND_EVENT_REMINDER | KIND_PERSONA | KIND_TEAM | KIND_MANAGED_AGENT
         | KIND_TEAM_CATALOG
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): sponsorship is a user acting on
+        // their own Starknet account, so it carries the same scope as other
+        // user-owned global state. Membership is what gates who may ask to be
+        // sponsored — the paymaster applies no quota of its own.
+        | KIND_SPONSOR_REQUEST
+        | KIND_SPONSOR_RESULT
         | super::push_lease::KIND_PUSH_LEASE => Ok(Scope::UsersWrite),
         // NIP-AM: agent turn metrics are agent-authored global events (encrypted to owner).
         KIND_AGENT_TURN_METRIC => Ok(Scope::MessagesWrite),
@@ -417,6 +424,11 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             | KIND_AGENT_ENGRAM
             // NIP-ER event reminders are addressed by (pubkey, kind, d_tag); never channel-scoped.
             | KIND_EVENT_REMINDER
+            // FORK-LOCAL PATCH (adrienlacombe/buzz): a Starknet account belongs to
+            // the author, never to a channel, so sponsorship is addressed by
+            // (pubkey, kind, nonce) and is never channel-scoped.
+            | KIND_SPONSOR_REQUEST
+            | KIND_SPONSOR_RESULT
             // Agent profile (10100): user-owned replaceable, keyed by pubkey.
             | KIND_AGENT_PROFILE
             // NIP-AP: persona definitions (30175): owner-authored, keyed by (pubkey, kind, d_tag).

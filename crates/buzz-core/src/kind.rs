@@ -618,6 +618,36 @@ pub const KIND_GIT_STATUS_DRAFT: u32 = 1633;
 /// announcement, never a project. See `docs/nips/NIP-MP.md`.
 pub const KIND_PROJECT: u32 = 30621;
 
+// FORK-LOCAL PATCH (adrienlacombe/buzz): fork-reserved kinds, 30900-30999.
+//
+// Deliberately not beside upstream's 30174-30178 cluster. That is where upstream
+// adds new parameterized-replaceable kinds, so a fork constant sitting in it
+// collides on merge — which is exactly what happened when upstream shipped
+// KIND_TEAM_CATALOG = 30178 onto an integer this fork already held.
+
+/// Sponsorship request: a SNIP-9 payload for the paymaster to pay for and submit.
+///
+/// Parameterized-replaceable, addressed by `(pubkey, kind, d_tag)` with the d-tag
+/// set to the SNIP-9 nonce. That is not decoration — it makes a resend idempotent
+/// under NIP-01 last-write-wins, so a client retrying on a dropped connection
+/// cannot cause two sponsored submissions. The nonce is single-use on chain
+/// anyway, so the two agree.
+///
+/// **30900 is reused deliberately.** The withdrawn NIP-SW wallet binding briefly
+/// held it, and migration `0028` therefore already excludes 30900 from full-text
+/// search — an exclusion this kind wants for the same reason, since the payload
+/// carries account addresses and calldata. Reusing the integer inherits that
+/// without another `search_tsv` rewrite over the whole events table. Any stale
+/// binding still stored at 30900 fails sponsor-payload validation and is ignored,
+/// so the reuse fails closed rather than being misread.
+pub const KIND_SPONSOR_REQUEST: u32 = 30900;
+
+/// Sponsorship result: what the paymaster did with a request.
+///
+/// Carries a status and, on success, a transaction hash — no addresses or
+/// calldata, so unlike the request it needs no search exclusion.
+pub const KIND_SPONSOR_RESULT: u32 = 30901;
+
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -749,6 +779,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_GIT_STATUS_CLOSED,
     KIND_GIT_STATUS_DRAFT,
     KIND_PROJECT,
+    KIND_SPONSOR_REQUEST,
+    KIND_SPONSOR_RESULT,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -847,6 +879,10 @@ const _: () = assert!(is_parameterized_replaceable(KIND_WORKFLOW_DEF)); // 30620
 const _: () = assert!(is_parameterized_replaceable(KIND_EVENT_REMINDER)); // 30300 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_DM_VISIBILITY)); // 30622 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 30000–39999
+                                                                   // FORK-LOCAL PATCH (adrienlacombe/buzz): the fork-reserved block must stay
+                                                                   // addressable — the request's idempotency depends on d-tag replacement.
+const _: () = assert!(is_parameterized_replaceable(KIND_SPONSOR_REQUEST)); // 30900
+const _: () = assert!(is_parameterized_replaceable(KIND_SPONSOR_RESULT)); // 30901
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
 

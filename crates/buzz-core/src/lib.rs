@@ -36,6 +36,8 @@ pub mod pairing;
 pub mod presence;
 /// Canonical relay runtime identities.
 pub mod relay;
+/// Wire format for sponsorship requests and results.
+pub mod sponsorship;
 /// Address derivation for Nostr-key-controlled Starknet accounts.
 pub mod starknet_account;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
