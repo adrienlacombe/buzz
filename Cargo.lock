@@ -1148,10 +1148,15 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
+ "starknet-accounts",
  "starknet-core",
+ "starknet-providers",
+ "starknet-signers",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

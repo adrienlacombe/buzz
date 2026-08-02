@@ -393,10 +393,47 @@ hours is not. Closing it properly needs durable state written before submission.
 Run **one** instance. Two would both rebuild the same dedupe set and both service a
 request that arrives before either has published; there is no lock.
 
+#### Fee estimation is the anti-drain guard, not a price check
+
+There is **no per-member quota** — a deliberate choice. What stands in its place is
+that `LocalSubmitter::submit` calls `starknet_estimateFee` before sending, and
+estimation runs the whole multicall including `__validate__` and
+`execute_from_outside_v2`. So a request with a bad BIP-340 signature, a spent nonce,
+a closed window or a reverting call **errors during estimation and is refused for
+free** instead of costing a reverted transaction's fee. Without it, any member could
+drain the sponsor with requests that were never going to succeed.
+
+Two things sit on top:
+
+- **The chain-id check** (`ChainConfig::chain_id_matches`), which is cheaper still —
+  no RPC at all. A request signed for another network embeds that chain id in its
+  SNIP-12 hash, so it could only revert here. The chain id comes from the *node* via
+  `LocalSubmitter::from_env`, which returns it for `ChainConfig`, so the check and
+  the signing chain id are the same number by construction rather than by two config
+  values agreeing.
+- **A per-transaction fee ceiling** (`BUZZ_PAYMASTER_MAX_FEE_FRI`, default 10 STRK).
+  The calls in a request are the *user's* and arbitrary, so estimation can correctly
+  report an enormous number. The ceiling is checked against the **padded bound**
+  (1.5x gas × 1.5x price = 2.25x the estimate), because the bound is what the
+  sequencer is authorised to take — not the estimate. `TIP` is 0 for the same reason:
+  a tip is fee outside the gas bounds, and any non-zero value makes the ceiling an
+  underestimate.
+
+**Submissions must not overlap.** The account nonce is read from the pre-confirmed
+block and consumed by the transaction that follows, so two in flight would collide
+and the second would be rejected. The service loop is sequential by construction;
+this is the second reason to run one instance.
+
 Spending authority enters through exactly one boundary, the `Submitter` trait, so
 the funded key is invisible to every other part of the crate. `Config::from_env`
 reads only the sponsor's *Nostr* key (relay identity, spends nothing) and its
-`Debug` impl is hand-written to keep the secret half out of logs.
+`Debug` impl is hand-written to keep the secret half out of logs; the Starknet key is
+read in `submitter.rs` alone, handed straight to the signer, and no error path
+formats it.
+
+The daemon is `cargo run -p buzz-paymaster`. It listens on **no port** — it connects
+out — and its required environment is documented at the top of
+`crates/buzz-paymaster/src/main.rs`.
 
 ### Repo settings (no file changes — preferred mechanism)
 

@@ -52,7 +52,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
 use crate::handler::{build_result_event, d_tag, handle_request_event, result_d_tag, Submitter};
-use crate::{Chain, SponsorError};
+use crate::{Chain, ChainConfig, SponsorError};
 
 /// Subscription id for the request stream.
 pub const REQUESTS_SUB: &str = "sponsor-requests";
@@ -197,10 +197,8 @@ pub struct Sponsor<C, S, K> {
     pub submitter: S,
     /// Wall clock.
     pub clock: K,
-    /// Class hash accounts are deployed from.
-    pub class_hash: Felt,
-    /// Universal Deployer address.
-    pub udc: Felt,
+    /// The chain, the class deployed on it, and the deployer.
+    pub config: ChainConfig,
     /// The sponsor's Nostr identity, used to sign results.
     pub keys: Keys,
 }
@@ -208,13 +206,19 @@ pub struct Sponsor<C, S, K> {
 impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
     /// Builds a sponsor from config plus the two components that touch the outside
     /// world.
-    pub fn from_config(config: &Config, chain: C, submitter: S, clock: K) -> Self {
+    pub fn from_config(config: &Config, chain_id: Felt, chain: C, submitter: S, clock: K) -> Self {
         Self {
             chain,
             submitter,
             clock,
-            class_hash: config.class_hash,
-            udc: config.udc,
+            // The chain id comes from the node, not from `config`: a configured value
+            // could disagree with the chain the submitter is actually sending to,
+            // and then the check it guards would be checking the wrong thing.
+            config: ChainConfig {
+                class_hash: config.class_hash,
+                udc: config.udc,
+                chain_id,
+            },
             keys: config.keys.clone(),
         }
     }
@@ -371,8 +375,7 @@ impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
             event,
             &self.chain,
             &self.submitter,
-            self.class_hash,
-            self.udc,
+            &self.config,
             self.clock.now_secs(),
         )
         .await;
@@ -546,8 +549,11 @@ mod tests {
             chain: Chain0(deployed),
             submitter: CountingSubmit::default(),
             clock: FixedClock(now),
-            class_hash: Felt::from_hex_unchecked(CLASS_HASH),
-            udc: crate::UDC_MAINNET,
+            config: ChainConfig {
+                class_hash: Felt::from_hex_unchecked(CLASS_HASH),
+                udc: crate::UDC_MAINNET,
+                chain_id: starknet_core::utils::cairo_short_string_to_felt("SN_MAIN").unwrap(),
+            },
             keys: Keys::generate(),
         }
     }

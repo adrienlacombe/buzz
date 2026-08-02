@@ -10,7 +10,7 @@ use buzz_core::sponsorship::{SponsorRequest, SponsorResult};
 use nostr::{Event, EventBuilder, EventId, Keys, Kind, PublicKey, Tag, TagKind};
 use starknet_core::types::{Call, Felt};
 
-use crate::{service_request, Chain, SponsorError};
+use crate::{service_request, Chain, ChainConfig, SponsorError};
 
 /// Seconds of validity a request must have left before it is worth submitting.
 ///
@@ -101,8 +101,7 @@ pub async fn handle_request_event(
     event: &Event,
     chain: &impl Chain,
     submitter: &impl Submitter,
-    class_hash: Felt,
-    udc: Felt,
+    config: &ChainConfig,
     now: u64,
 ) -> SponsorResult {
     let Some(d) = d_tag(event) else {
@@ -155,7 +154,7 @@ pub async fn handle_request_event(
     }
 
     let author = event.pubkey.to_hex();
-    let calls = match service_request(chain, class_hash, &author, udc, &request, &d).await {
+    let calls = match service_request(chain, config, &author, &request, &d).await {
         Ok(calls) => calls,
         Err(e) => {
             return SponsorResult::Declined {
@@ -211,8 +210,12 @@ mod tests {
         }
     }
 
-    fn class() -> Felt {
-        Felt::from_hex_unchecked(CLASS_HASH)
+    fn cfg() -> ChainConfig {
+        ChainConfig {
+            class_hash: Felt::from_hex_unchecked(CLASS_HASH),
+            udc: crate::UDC_MAINNET,
+            chain_id: starknet_core::utils::cairo_short_string_to_felt("SN_MAIN").unwrap(),
+        }
     }
 
     fn payload(nonce: &str) -> String {
@@ -244,8 +247,7 @@ mod tests {
             &event(payload("0x2a"), Some("0x2a")),
             &Chain0(false),
             &OkSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             NOW,
         )
         .await;
@@ -272,8 +274,7 @@ mod tests {
             &event(payload("0x2a"), Some("0x2a")),
             &Chain0(true),
             &OkSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             NOW,
         )
         .await;
@@ -294,8 +295,7 @@ mod tests {
             &event(payload("0x2a"), None),
             &Chain0(true),
             &OkSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             NOW,
         )
         .await;
@@ -308,8 +308,7 @@ mod tests {
             &event(payload("0x2a"), Some("0xother")),
             &Chain0(true),
             &OkSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             NOW,
         )
         .await;
@@ -326,8 +325,7 @@ mod tests {
             ),
             &Chain0(true),
             &OkSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             NOW,
         )
         .await;
@@ -342,8 +340,7 @@ mod tests {
             &event(payload("0x2a"), Some("0x2a")),
             &Chain0(true),
             &FailSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             NOW,
         )
         .await;
@@ -375,8 +372,7 @@ mod tests {
             &event(payload("0x2a"), Some("0x2a")),
             &Chain0(true),
             &NeverSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             5_000,
         )
         .await;
@@ -397,8 +393,7 @@ mod tests {
             &event(payload("0x2a"), Some("0x2a")),
             &Chain0(true),
             &NeverSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             now,
         )
         .await;
@@ -411,8 +406,7 @@ mod tests {
             &event(payload("0x2a"), Some("0x2a")),
             &Chain0(true),
             &NeverSubmit,
-            class(),
-            crate::UDC_MAINNET,
+            &cfg(),
             500,
         )
         .await;
@@ -479,15 +473,8 @@ mod tests {
             (payload("0x7"), Some("0x7")),
             ("garbage".to_string(), Some("0x7")),
         ] {
-            let r = handle_request_event(
-                &event(content, d),
-                &Chain0(true),
-                &OkSubmit,
-                class(),
-                crate::UDC_MAINNET,
-                NOW,
-            )
-            .await;
+            let r = handle_request_event(&event(content, d), &Chain0(true), &OkSubmit, &cfg(), NOW)
+                .await;
             assert_eq!(r.nonce(), "0x7");
         }
     }

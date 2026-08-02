@@ -43,6 +43,7 @@ pub mod config;
 pub mod handler;
 pub mod rpc;
 pub mod service;
+pub mod submitter;
 pub mod ws;
 
 /// Errors from sponsorship.
@@ -75,6 +76,41 @@ pub trait Chain {
         &self,
         address: Felt,
     ) -> impl std::future::Future<Output = Result<bool, SponsorError>> + Send;
+}
+
+/// The chain the sponsor operates on, and what it deploys there.
+///
+/// Bundled rather than passed as three loose `Felt`s: a transposed `class_hash` and
+/// `udc` would type-check and then deploy nothing while still charging a fee, and
+/// there is no later step that would catch it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChainConfig {
+    /// Class accounts are deployed from.
+    pub class_hash: Felt,
+    /// Universal Deployer address.
+    pub udc: Felt,
+    /// Chain id as a felt, e.g. `SN_MAIN` encoded as a Cairo short string.
+    ///
+    /// Read from the node rather than configured, so it cannot disagree with the
+    /// chain the sponsor is actually submitting to.
+    pub chain_id: Felt,
+}
+
+impl ChainConfig {
+    /// Whether a request's `chain_id` short string names this chain.
+    ///
+    /// # Why this is checked before submitting
+    ///
+    /// The user's signature covers a SNIP-12 hash that embeds the chain id, so a
+    /// request signed for another network cannot verify here — it reverts, and the
+    /// sponsor pays for the revert. With no per-member quota, publishing
+    /// wrong-chain requests in a loop would otherwise be a way to drain the sponsor
+    /// using nothing but valid membership.
+    pub fn chain_id_matches(&self, short_string: &str) -> bool {
+        starknet_core::utils::cairo_short_string_to_felt(short_string)
+            .map(|f| f == self.chain_id)
+            .unwrap_or(false)
+    }
 }
 
 /// What the sponsor must do to service a request.
@@ -195,12 +231,14 @@ pub fn udc_deploy_calldata(
 /// targets an address with no contract at it.
 pub fn build_atomic_calls(
     plan: &SponsorPlan,
-    udc: Felt,
-    class_hash: Felt,
+    config: &ChainConfig,
     nostr_pubkey: &str,
     execution: &OutsideExecution,
     signature: &[Felt; 4],
 ) -> Result<Vec<Call>, SponsorError> {
+    let ChainConfig {
+        class_hash, udc, ..
+    } = *config;
     // Re-derive rather than trust the plan: this function is the last point before
     // money is spent, and a plan carrying an address that does not match the pubkey
     // would aim a sponsored call at a contract the user does not control.
@@ -247,15 +285,22 @@ pub fn build_atomic_calls(
 /// the account address is derived from it rather than supplied.
 pub async fn service_request(
     chain: &impl Chain,
-    class_hash: Felt,
+    config: &ChainConfig,
     author_pubkey: &str,
-    udc: Felt,
     request: &SponsorRequest,
     d_tag: &str,
 ) -> Result<Vec<Call>, SponsorError> {
     request
         .validate()
         .map_err(|e| SponsorError::Declined(e.to_string()))?;
+    if !config.chain_id_matches(&request.chain_id) {
+        // The signature embeds the chain id, so this could only ever revert — at the
+        // sponsor's expense. Cheapest possible refusal: no chain query, no fee.
+        return Err(SponsorError::Declined(format!(
+            "request is for chain {:?}, but this sponsor serves {:#x}",
+            request.chain_id, config.chain_id
+        )));
+    }
     if !request.nonce_matches_d_tag(d_tag) {
         // Replacement is keyed on the d tag while on-chain replay protection is
         // keyed on the nonce. Allowing them to differ would let two distinct
@@ -296,15 +341,8 @@ pub async fn service_request(
         signature[i] = felt("signature", s)?;
     }
 
-    let plan = plan_for(chain, class_hash, author_pubkey).await?;
-    build_atomic_calls(
-        &plan,
-        udc,
-        class_hash,
-        author_pubkey,
-        &execution,
-        &signature,
-    )
+    let plan = plan_for(chain, config.class_hash, author_pubkey).await?;
+    build_atomic_calls(&plan, config, author_pubkey, &execution, &signature)
 }
 
 #[cfg(test)]
@@ -337,6 +375,15 @@ mod tests {
 
     fn class_hash() -> Felt {
         Felt::from_hex_unchecked(CLASS_HASH)
+    }
+
+    /// Mainnet, as the fixtures' `SN_MAIN` requests expect.
+    fn cfg() -> ChainConfig {
+        ChainConfig {
+            class_hash: class_hash(),
+            udc: UDC_MAINNET,
+            chain_id: starknet_core::utils::cairo_short_string_to_felt("SN_MAIN").unwrap(),
+        }
     }
 
     #[tokio::test]
@@ -458,15 +505,7 @@ mod tests {
         let plan = plan_for(&FakeChain { deployed }, class_hash(), PUBKEY)
             .await
             .unwrap();
-        build_atomic_calls(
-            &plan,
-            UDC_MAINNET,
-            class_hash(),
-            PUBKEY,
-            &an_execution(),
-            &a_signature(),
-        )
-        .unwrap()
+        build_atomic_calls(&plan, &cfg(), PUBKEY, &an_execution(), &a_signature()).unwrap()
     }
 
     #[tokio::test]
@@ -534,14 +573,7 @@ mod tests {
             address: Felt::from(0xdead_u32),
         };
         assert!(matches!(
-            build_atomic_calls(
-                &forged,
-                UDC_MAINNET,
-                class_hash(),
-                PUBKEY,
-                &an_execution(),
-                &a_signature()
-            ),
+            build_atomic_calls(&forged, &cfg(), PUBKEY, &an_execution(), &a_signature()),
             Err(SponsorError::Declined(_))
         ));
     }
@@ -578,9 +610,8 @@ mod tests {
     async fn a_request_from_a_new_member_deploys_and_executes() {
         let calls = service_request(
             &FakeChain { deployed: false },
-            class_hash(),
+            &cfg(),
             PUBKEY,
-            UDC_MAINNET,
             &a_request(),
             "0x2a",
         )
@@ -594,9 +625,8 @@ mod tests {
     async fn a_request_from_an_existing_member_only_executes() {
         let calls = service_request(
             &FakeChain { deployed: true },
-            class_hash(),
+            &cfg(),
             PUBKEY,
-            UDC_MAINNET,
             &a_request(),
             "0x2a",
         )
@@ -612,9 +642,8 @@ mod tests {
         // sponsorship into another member's account.
         let calls = service_request(
             &FakeChain { deployed: true },
-            class_hash(),
+            &cfg(),
             PUBKEY,
-            UDC_MAINNET,
             &a_request(),
             "0x2a",
         )
@@ -630,9 +659,8 @@ mod tests {
     async fn a_nonce_that_disagrees_with_the_d_tag_is_declined() {
         let err = service_request(
             &FakeChain { deployed: true },
-            class_hash(),
+            &cfg(),
             PUBKEY,
-            UDC_MAINNET,
             &a_request(),
             "0xdifferent",
         )
@@ -649,9 +677,32 @@ mod tests {
         let mut r = a_request();
         r.calls.clear();
         assert!(matches!(
-            service_request(&BrokenChain, class_hash(), PUBKEY, UDC_MAINNET, &r, "0x2a").await,
+            service_request(&BrokenChain, &cfg(), PUBKEY, &r, "0x2a").await,
             Err(SponsorError::Declined(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_request_for_another_chain_is_declined_before_any_chain_query() {
+        // The signature embeds the chain id, so this could only revert — at the
+        // sponsor's expense. With no per-member quota, a loop of these would
+        // otherwise drain the sponsor using nothing but valid membership.
+        // BrokenChain proves no query was made.
+        let mut r = a_request();
+        r.chain_id = "SN_SEPOLIA".into();
+        assert!(matches!(
+            service_request(&BrokenChain, &cfg(), PUBKEY, &r, "0x2a").await,
+            Err(SponsorError::Declined(_))
+        ));
+    }
+
+    #[test]
+    fn chain_id_matching_encodes_the_short_string() {
+        assert!(cfg().chain_id_matches("SN_MAIN"));
+        assert!(!cfg().chain_id_matches("SN_SEPOLIA"));
+        // Anything unencodable is a mismatch, never a match by accident.
+        assert!(!cfg().chain_id_matches(&"A".repeat(32)));
+        assert!(!cfg().chain_id_matches(""));
     }
 
     #[tokio::test]
@@ -659,15 +710,7 @@ mod tests {
         let mut r = a_request();
         r.calls[0].to = "not-a-felt".into();
         assert!(matches!(
-            service_request(
-                &FakeChain { deployed: true },
-                class_hash(),
-                PUBKEY,
-                UDC_MAINNET,
-                &r,
-                "0x2a"
-            )
-            .await,
+            service_request(&FakeChain { deployed: true }, &cfg(), PUBKEY, &r, "0x2a").await,
             Err(SponsorError::Declined(_))
         ));
     }
