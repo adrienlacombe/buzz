@@ -141,6 +141,69 @@ impl SponsorRequest {
     }
 }
 
+/// A request to deploy the author's account, nothing more.
+///
+/// # Why this is not a [`SponsorRequest`] with no calls
+///
+/// Deployment has two triggers. A [`SponsorRequest`] deploys the account as part of
+/// the first transaction it runs, which serves a user who wants to *do* something.
+/// This serves a user who has funded their address and expects it to become real:
+/// they have nothing to sign, and would otherwise have to spend ~0.92 STRK deploying
+/// it themselves.
+///
+/// It carries no SNIP-9 payload at all, so none of `caller`, the validity window or
+/// a signature applies — and its multicall is the UDC deploy **alone**, skipping the
+/// ~0.78 STRK of on-chain BIP-340 verification that `execute_from_outside_v2` costs.
+/// Deploying this way is cheaper than deploying as a side effect of a first
+/// transaction.
+///
+/// # What authorises it
+///
+/// The Nostr event signature, which the relay has already verified. The account
+/// address is derived from the event author, so a member can only ever ask for their
+/// own account, and the account that gets deployed is owned by that same pubkey.
+/// There is nothing here for an attacker to redirect.
+///
+/// The paymaster additionally requires the address to hold a minimum balance, which
+/// it reads from the chain rather than taking on trust. That is what makes "funded"
+/// mean funded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployRequest {
+    /// Starknet chain id short string, e.g. `SN_MAIN`. Must equal the event's `d`
+    /// tag, so one member has one deployment slot per chain.
+    pub chain_id: String,
+}
+
+impl DeployRequest {
+    /// Parses and validates a deployment request from event content.
+    pub fn from_json(content: &str) -> Result<Self, SponsorshipError> {
+        let parsed: Self = serde_json::from_str(content)
+            .map_err(|e| SponsorshipError::Malformed(e.to_string()))?;
+        parsed.validate()?;
+        Ok(parsed)
+    }
+
+    /// Rejects requests that cannot possibly succeed on chain.
+    pub fn validate(&self) -> Result<(), SponsorshipError> {
+        if self.chain_id.is_empty() || self.chain_id.len() > 31 {
+            return Err(SponsorshipError::Invalid {
+                field: "chain_id",
+                reason: "must be a non-empty Cairo short string".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Whether the request's chain id agrees with the event's `d` tag.
+    ///
+    /// The d tag *is* the chain id here, rather than a nonce: a member deploys once
+    /// per chain, so that is the natural cardinality of the replaceable slot, and a
+    /// retry replaces rather than accumulating.
+    pub fn chain_id_matches_d_tag(&self, d_tag: &str) -> bool {
+        self.chain_id == d_tag
+    }
+}
+
 /// What the paymaster did with a request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -293,6 +356,45 @@ mod tests {
         // they disagree, two requests can share one replaceable slot.
         assert!(valid().nonce_matches_d_tag("0x2a"));
         assert!(!valid().nonce_matches_d_tag("0x2b"));
+    }
+
+    #[test]
+    fn a_deploy_request_round_trips() {
+        let r = DeployRequest {
+            chain_id: "SN_MAIN".into(),
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(DeployRequest::from_json(&json).unwrap(), r);
+        assert!(r.chain_id_matches_d_tag("SN_MAIN"));
+        assert!(!r.chain_id_matches_d_tag("SN_SEPOLIA"));
+    }
+
+    #[test]
+    fn a_deploy_request_with_no_chain_id_is_rejected() {
+        assert!(matches!(
+            DeployRequest::from_json("{}"),
+            Err(SponsorshipError::Malformed(_))
+        ));
+        assert!(matches!(
+            DeployRequest::from_json(r#"{"chain_id":""}"#),
+            Err(SponsorshipError::Invalid {
+                field: "chain_id",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_sponsor_request_does_not_parse_as_a_deploy_request_by_accident() {
+        // Both carry chain_id, and serde ignores unknown fields, so a full
+        // sponsorship payload *would* parse as a DeployRequest. The kinds are what
+        // keep them apart (30900 vs 30902) — asserted here so nobody later decides
+        // one kind can carry both shapes.
+        let full = serde_json::to_string(&valid()).unwrap();
+        assert!(
+            DeployRequest::from_json(&full).is_ok(),
+            "the shapes overlap; separation is by event kind, not by payload"
+        );
     }
 
     #[test]

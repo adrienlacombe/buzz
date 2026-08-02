@@ -43,15 +43,18 @@
 
 use std::collections::HashSet;
 
-use buzz_core::kind::{KIND_SPONSOR_REQUEST, KIND_SPONSOR_RESULT};
+use buzz_core::kind::{KIND_SPONSOR_DEPLOY_REQUEST, KIND_SPONSOR_REQUEST, KIND_SPONSOR_RESULT};
 use buzz_core::sponsorship::SponsorResult;
-use nostr::{Event, Keys};
+use nostr::{Event, Keys, Kind};
 use serde_json::{json, Value};
 use starknet_core::types::Felt;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
-use crate::handler::{build_result_event, d_tag, handle_request_event, result_d_tag, Submitter};
+use crate::handler::{
+    build_result_event, d_tag, handle_deploy_request_event, handle_request_event, result_d_tag,
+    Submitter,
+};
 use crate::{Chain, ChainConfig, SponsorError};
 
 /// Subscription id for the request stream.
@@ -201,6 +204,12 @@ pub struct Sponsor<C, S, K> {
     pub config: ChainConfig,
     /// The sponsor's Nostr identity, used to sign results.
     pub keys: Keys,
+    /// Fee-token balance an account must hold before its deployment is sponsored.
+    ///
+    /// Zero means "deploy on request, funded or not", which is a decision rather than
+    /// a default: addresses are derivable from public pubkeys, so anyone can send
+    /// dust to any member and, at zero, turn that into a sponsored deployment.
+    pub min_deploy_balance: u128,
 }
 
 impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
@@ -218,8 +227,10 @@ impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
                 class_hash: config.class_hash,
                 udc: config.udc,
                 chain_id,
+                fee_token: config.fee_token,
             },
             keys: config.keys.clone(),
+            min_deploy_balance: config.min_deploy_balance,
         }
     }
 
@@ -232,7 +243,14 @@ impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
         })
     }
 
-    /// The filter for incoming requests.
+    /// The filter for incoming requests, of both kinds.
+    ///
+    /// One subscription carrying both triggers rather than two, so their backfills
+    /// cannot interleave with each other's EOSE and there is one place a request can
+    /// arrive from. They are told apart by `event.kind`, which is the discriminator
+    /// that actually distinguishes them — their payloads deliberately overlap
+    /// (`chain_id` is common, and serde ignores unknown fields), so parsing could
+    /// not.
     ///
     /// Deliberately unrestricted by author: membership is the gate on who may ask,
     /// and the relay has already applied it. Deliberately unrestricted by `since`
@@ -240,7 +258,7 @@ impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
     /// and the validity-window check is what keeps replaying old ones free.
     fn requests_filter(&self) -> Value {
         json!({
-            "kinds": [KIND_SPONSOR_REQUEST],
+            "kinds": [KIND_SPONSOR_REQUEST, KIND_SPONSOR_DEPLOY_REQUEST],
             "limit": BACKFILL_LIMIT,
         })
     }
@@ -371,19 +389,36 @@ impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
             return Ok(());
         }
 
-        let result = handle_request_event(
-            event,
-            &self.chain,
-            &self.submitter,
-            &self.config,
-            self.clock.now_secs(),
-        )
-        .await;
+        // Which trigger this is. By kind, not by payload: the two payloads overlap
+        // on purpose (both carry `chain_id`, and serde ignores unknown fields), so a
+        // parse could not tell them apart and would silently treat a sponsored
+        // execution as a bare deployment — dropping the user's calls.
+        let result = if event.kind == Kind::Custom(KIND_SPONSOR_DEPLOY_REQUEST as u16) {
+            handle_deploy_request_event(
+                event,
+                &self.chain,
+                &self.submitter,
+                &self.config,
+                self.min_deploy_balance,
+            )
+            .await
+        } else {
+            handle_request_event(
+                event,
+                &self.chain,
+                &self.submitter,
+                &self.config,
+                self.clock.now_secs(),
+            )
+            .await
+        };
 
         // Recorded *before* publishing. If publishing fails, the sponsor has still
         // spent the money, and the process must not be able to spend it again.
         if let SponsorResult::Submitted {
-            transaction_hash, ..
+            transaction_hash,
+            deployed,
+            ..
         } = &result
         {
             let paid = result_d_tag(&author.to_hex(), result.nonce());
@@ -392,6 +427,7 @@ impl<C: Chain, S: Submitter, K: Clock> Sponsor<C, S, K> {
             info!(
                 tx = %transaction_hash,
                 requester = %author.to_hex(),
+                deployed,
                 "sponsored a transaction"
             );
         } else if let SponsorResult::Declined { reason, .. } = &result {
@@ -478,10 +514,20 @@ mod tests {
     const CLASS_HASH: &str = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537";
     const NOW: u64 = 1_500;
 
-    struct Chain0(bool);
+    /// `.0` is whether the account exists; `.1` is its fee-token balance.
+    struct Chain0(bool, u128);
+    impl Chain0 {
+        /// Funded well above the floor, for tests where funding is not the subject.
+        fn funded(deployed: bool) -> Self {
+            Self(deployed, 5_000_000_000_000_000_000)
+        }
+    }
     impl Chain for Chain0 {
         async fn is_deployed(&self, _a: Felt) -> Result<bool, SponsorError> {
             Ok(self.0)
+        }
+        async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
+            Ok(self.1)
         }
     }
 
@@ -546,15 +592,17 @@ mod tests {
 
     fn sponsor(deployed: bool, now: u64) -> Sponsor<Chain0, CountingSubmit, FixedClock> {
         Sponsor {
-            chain: Chain0(deployed),
+            chain: Chain0::funded(deployed),
             submitter: CountingSubmit::default(),
             clock: FixedClock(now),
             config: ChainConfig {
                 class_hash: Felt::from_hex_unchecked(CLASS_HASH),
                 udc: crate::UDC_MAINNET,
                 chain_id: starknet_core::utils::cairo_short_string_to_felt("SN_MAIN").unwrap(),
+                fee_token: crate::STRK_MAINNET,
             },
             keys: Keys::generate(),
+            min_deploy_balance: 1_000_000_000_000_000_000,
         }
     }
 
@@ -897,7 +945,12 @@ mod tests {
     #[test]
     fn the_filters_ask_for_the_right_kinds() {
         let s = sponsor(true, NOW);
-        assert_eq!(s.requests_filter()["kinds"], json!([KIND_SPONSOR_REQUEST]));
+        // Both triggers on one subscription: a first sponsored transaction, and a
+        // funded account asking to be deployed.
+        assert_eq!(
+            s.requests_filter()["kinds"],
+            json!([KIND_SPONSOR_REQUEST, KIND_SPONSOR_DEPLOY_REQUEST])
+        );
         assert_eq!(s.results_filter()["kinds"], json!([KIND_SPONSOR_RESULT]));
         // Only our own results count as a record of what we paid for.
         assert_eq!(

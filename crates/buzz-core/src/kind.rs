@@ -648,6 +648,33 @@ pub const KIND_SPONSOR_REQUEST: u32 = 30900;
 /// calldata, so unlike the request it needs no search exclusion.
 pub const KIND_SPONSOR_RESULT: u32 = 30901;
 
+/// Deployment request: "my account is funded, please deploy it."
+///
+/// The second of two triggers for deployment, and the reason it exists is that the
+/// first one is not enough on its own. [`KIND_SPONSOR_REQUEST`] deploys an account
+/// as part of the first transaction it runs, which covers a user who wants to *do*
+/// something — but a user who has funded their address and simply expects it to
+/// become real has nothing to sign, and would otherwise have to pay ~0.92 STRK to
+/// deploy it themselves.
+///
+/// Deliberately a separate kind rather than a sponsorship request with no calls:
+/// - It carries no SNIP-9 payload, so it needs none of `caller`, the validity
+///   window, or a signature — those fields would all be dead weight, and
+///   `validate()` rightly rejects a sponsored execution with nothing to execute.
+/// - Its multicall is the UDC deploy **alone**, with no `execute_from_outside_v2`,
+///   which skips the ~0.78 STRK of on-chain BIP-340 verification. Deploying is
+///   *cheaper* this way than as part of a first transaction.
+/// - Authorisation is the Nostr event signature the relay has already verified. The
+///   address is derived from the author, so a member can only ever ask for their own
+///   account, and the deployed account's owner is that same pubkey.
+///
+/// Addressed by `(pubkey, kind, d_tag)` with the d-tag set to the **chain id short
+/// string**, e.g. `SN_MAIN`. One slot per member per chain, which is exactly the
+/// cardinality of the thing being asked for — a member deploys once — so a retry
+/// replaces rather than accumulating. A chain id is not a valid felt, so it cannot
+/// collide with a `KIND_SPONSOR_REQUEST` nonce even though results share a keyspace.
+pub const KIND_SPONSOR_DEPLOY_REQUEST: u32 = 30902;
+
 /// All registered kind constants — used for duplicate detection and iteration.
 pub const ALL_KINDS: &[u32] = &[
     KIND_PROFILE,
@@ -781,6 +808,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_PROJECT,
     KIND_SPONSOR_REQUEST,
     KIND_SPONSOR_RESULT,
+    KIND_SPONSOR_DEPLOY_REQUEST,
 ];
 
 /// Returns `true` if `kind` is in the ephemeral range (20000–29999).
@@ -883,6 +911,7 @@ const _: () = assert!(is_parameterized_replaceable(KIND_PROJECT)); // 30621 ∈ 
                                                                    // addressable — the request's idempotency depends on d-tag replacement.
 const _: () = assert!(is_parameterized_replaceable(KIND_SPONSOR_REQUEST)); // 30900
 const _: () = assert!(is_parameterized_replaceable(KIND_SPONSOR_RESULT)); // 30901
+const _: () = assert!(is_parameterized_replaceable(KIND_SPONSOR_DEPLOY_REQUEST)); // 30902
 const _: () = assert!(is_parameterized_replaceable(KIND_THREAD_SUMMARY)); // 39005 ∈ 30000–39999
 const _: () = assert!(is_parameterized_replaceable(KIND_WINDOW_BOUNDS)); // 39006 ∈ 30000–39999
 

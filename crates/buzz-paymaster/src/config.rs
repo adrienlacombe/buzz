@@ -33,6 +33,29 @@ pub const ENV_NOSTR_KEY: &str = "BUZZ_PAYMASTER_NOSTR_KEY";
 /// Environment variable holding a NIP-OA authorization tag value, if the relay
 /// requires one.
 pub const ENV_AUTH_TAG: &str = "BUZZ_PAYMASTER_AUTH_TAG";
+/// Environment variable overriding the fee-token address used for balance checks.
+pub const ENV_FEE_TOKEN: &str = "BUZZ_PAYMASTER_FEE_TOKEN";
+/// Environment variable holding the balance an account must hold before its
+/// deployment is sponsored, in the fee token's smallest unit.
+pub const ENV_MIN_DEPLOY_BALANCE: &str = "BUZZ_PAYMASTER_MIN_DEPLOY_BALANCE";
+
+/// Default funding floor for sponsoring a deployment: 1 STRK.
+///
+/// # Why there is a floor at all
+///
+/// Account addresses are derived from Nostr pubkeys, and pubkeys are public on the
+/// relay — so anyone can compute every member's address and send dust to it. Without
+/// a floor, doing that to the whole membership would convert into a sponsored
+/// deployment for each of them, at the sponsor's expense.
+///
+/// One STRK is the same order as what a deployment costs the sponsor, so dusting the
+/// membership costs the attacker roughly what it costs the sponsor, rather than
+/// nothing. It is also a clear "a real person funded this" signal without being a
+/// barrier.
+///
+/// A member who never funds their address is not stuck: their account still deploys
+/// as part of their first sponsored transaction, which is the other trigger.
+pub const DEFAULT_MIN_DEPLOY_BALANCE: u128 = 1_000_000_000_000_000_000;
 
 /// Everything the service loop needs that is not a live connection.
 pub struct Config {
@@ -52,6 +75,10 @@ pub struct Config {
     pub keys: Keys,
     /// NIP-OA authorization tag, if the relay requires one.
     pub auth_tag: Option<Tag>,
+    /// Token whose balance decides whether an account counts as funded.
+    pub fee_token: Felt,
+    /// Balance an account must hold before its deployment is sponsored.
+    pub min_deploy_balance: u128,
 }
 
 impl std::fmt::Debug for Config {
@@ -65,6 +92,8 @@ impl std::fmt::Debug for Config {
             .field("rpc_url", &self.rpc_url)
             .field("class_hash", &format_args!("{:#x}", self.class_hash))
             .field("udc", &format_args!("{:#x}", self.udc))
+            .field("fee_token", &format_args!("{:#x}", self.fee_token))
+            .field("min_deploy_balance", &self.min_deploy_balance)
             .field("nostr_pubkey", &self.keys.public_key().to_hex())
             .field("auth_tag", &self.auth_tag.is_some())
             .finish()
@@ -118,6 +147,27 @@ impl Config {
             _ => None,
         };
 
+        let fee_token = match std::env::var(ENV_FEE_TOKEN) {
+            Ok(v) if !v.trim().is_empty() => Felt::from_hex(v.trim())
+                .map_err(|_| SponsorError::Config(format!("{ENV_FEE_TOKEN} is not a felt")))?,
+            _ => crate::STRK_MAINNET,
+        };
+        if fee_token == Felt::ZERO {
+            // Every balance would read as an error or zero, so every deployment
+            // request would be refused as unfunded — a confusing failure to debug.
+            return Err(SponsorError::Config(format!("{ENV_FEE_TOKEN} is zero")));
+        }
+
+        let min_deploy_balance = match std::env::var(ENV_MIN_DEPLOY_BALANCE) {
+            Ok(v) if !v.trim().is_empty() => v.trim().parse::<u128>().map_err(|_| {
+                SponsorError::Config(format!(
+                    "{ENV_MIN_DEPLOY_BALANCE} must be an integer count of the token's \
+                     smallest unit"
+                ))
+            })?,
+            _ => DEFAULT_MIN_DEPLOY_BALANCE,
+        };
+
         Ok(Self {
             relay_url,
             rpc_url,
@@ -125,6 +175,8 @@ impl Config {
             udc,
             keys,
             auth_tag,
+            fee_token,
+            min_deploy_balance,
         })
     }
 }
@@ -151,6 +203,8 @@ mod tests {
             udc: crate::UDC_MAINNET,
             keys: Keys::generate(),
             auth_tag: None,
+            fee_token: crate::STRK_MAINNET,
+            min_deploy_balance: DEFAULT_MIN_DEPLOY_BALANCE,
         };
         let rendered = format!("{cfg:?}");
         assert!(rendered.contains(&cfg.keys.public_key().to_hex()));

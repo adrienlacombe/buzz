@@ -265,11 +265,32 @@ a case it considered.
 
 ### Fork-local event kinds
 
-**Two: `KIND_SPONSOR_REQUEST = 30900` and `KIND_SPONSOR_RESULT = 30901`**, the
-sponsorship protocol between a client and `buzz-paymaster`. `kind.rs` was briefly
-byte-identical to upstream after NIP-SW was removed; these bring the divergence
-back, which is the price of routing sponsorship over Nostr instead of an HTTP
-endpoint on a funded service.
+**Three**, the sponsorship protocol between a client and `buzz-paymaster`:
+`KIND_SPONSOR_REQUEST = 30900`, `KIND_SPONSOR_RESULT = 30901`, and
+`KIND_SPONSOR_DEPLOY_REQUEST = 30902`. `kind.rs` was briefly byte-identical to
+upstream after NIP-SW was removed; these bring the divergence back, which is the
+price of routing sponsorship over Nostr instead of an HTTP endpoint on a funded
+service.
+
+**30902 is deliberately not a 30900 with no calls.** It carries no SNIP-9 payload, so
+`caller`, the validity window and the signature would all be dead fields — and
+`SponsorRequest::validate()` rightly refuses a sponsored execution with nothing to
+execute. More importantly its multicall is the UDC deploy *alone*, with no
+`execute_from_outside_v2`, which skips ~0.78 STRK of on-chain BIP-340 verification:
+deploying this way is **cheaper** than deploying as part of a first transaction.
+
+The two payloads overlap — both carry `chain_id`, and serde ignores unknown fields —
+so a full sponsorship payload *does* parse as a `DeployRequest`. Separation is by
+**event kind**, asserted by a test in `sponsorship.rs`. Anything that dispatched on
+payload shape would silently treat a sponsored execution as a bare deployment and
+drop the user's calls.
+
+**The desktop and mobile kind registries deliberately do not carry these three yet.**
+The AGENTS.md checklist below says they must stay in sync, and they will — in the
+commit that adds the client code using them. Neither client has *any* Starknet
+awareness today (`grep -ril starknet desktop/src mobile/lib` returns nothing), so
+adding constants now would be three lines of conflict surface in an upstream file for
+code that does not exist.
 
 **30900 is reused deliberately.** The withdrawn wallet binding held it for a day, so
 migration `0028` already excludes 30900 from full-text search — an exclusion the
@@ -340,9 +361,44 @@ the sequencer without a deployment having happened.
 
 Because a fresh account cannot pay its own ~0.78 STRK of BIP-340 verification, it
 cannot act at all until someone else pays first. `buzz-paymaster` is that someone:
-it subscribes to the relay as an ordinary client, watches kind:30900, and submits a
-**single atomic multicall** that deploys the account (via the UDC, from a funded
-sponsor account) and runs the user's SNIP-9 payload in one transaction.
+it subscribes to the relay as an ordinary client and answers two request kinds on
+kind:30901.
+
+#### Deployment is lazy, with two triggers
+
+Nothing is deployed at signup — addresses are counterfactual, so the sponsor never
+pays for the majority of members who join and never transact. Deployment happens at
+whichever of these comes first:
+
+| Trigger | Kind | Multicall | Cost to the sponsor |
+|---|---|---|---|
+| First sponsored transaction | 30900 | UDC deploy **+** `execute_from_outside_v2` | deploy + ~0.78 STRK BIP-340 |
+| The account gets funded | 30902 | UDC deploy **alone** | deploy only |
+
+The second is the cheaper of the two, which is worth knowing before "simplifying" it
+into the first: with no `execute_from_outside_v2` there is no on-chain signature
+verification to pay for. It exists because a member who has sent STRK to their
+address and expects it to become real has nothing to sign and no transaction to make,
+and would otherwise have to spend ~0.92 STRK deploying it themselves.
+
+**The funding trigger needs a floor, and this is why.** Addresses derive from Nostr
+pubkeys, and pubkeys are public on the relay — anyone can compute every member's
+address and send dust to it. The member's own signed event is what asks for the
+deployment, but a client that watches its balance would ask automatically, so dust
+alone could set it off. `BUZZ_PAYMASTER_MIN_DEPLOY_BALANCE` (default 1 STRK, read
+**from the chain**, never from the request) makes dusting the membership cost the
+attacker roughly what it costs the sponsor. Set it to 0 and you have chosen to deploy
+for any member who asks; a test pins that as deliberate rather than accidental.
+
+Refusals are ordered by how little they cost to discover: wrong chain (no RPC),
+already deployed (one RPC — and no balance read, asserted by a test), not funded (one
+more RPC).
+
+**Only the client half is missing.** Neither desktop nor mobile knows anything about
+Starknet yet, so nothing publishes a 30902 today. The natural route for desktop is a
+Tauri command wrapping `buzz_core::starknet_account::account_address` — the derivation
+is already Rust and already tested — rather than pulling starknet.js into the
+frontend.
 
 Four properties are load-bearing. Each was chosen against a specific failure, so
 changing one needs the failure re-considered rather than the code re-read:

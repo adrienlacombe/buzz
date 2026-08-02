@@ -6,11 +6,11 @@
 //! key and no funds.
 
 use buzz_core::kind::KIND_SPONSOR_RESULT;
-use buzz_core::sponsorship::{SponsorRequest, SponsorResult};
+use buzz_core::sponsorship::{DeployRequest, SponsorRequest, SponsorResult};
 use nostr::{Event, EventBuilder, EventId, Keys, Kind, PublicKey, Tag, TagKind};
 use starknet_core::types::{Call, Felt};
 
-use crate::{service_request, Chain, ChainConfig, SponsorError};
+use crate::{service_deploy_request, service_request, Chain, ChainConfig, SponsorError};
 
 /// Seconds of validity a request must have left before it is worth submitting.
 ///
@@ -181,6 +181,66 @@ pub async fn handle_request_event(
     }
 }
 
+/// Services one **deployment** request event — the funded-wallet trigger.
+///
+/// Separate from [`handle_request_event`] because almost nothing is shared: there is
+/// no SNIP-9 payload, so no signature, no validity window, and nothing to pass
+/// through to the account. What it does share is the outcome shape, so a client
+/// watches one result kind for both.
+///
+/// The result's nonce field carries the **chain id**, matching the request's `d` tag,
+/// so [`result_d_tag`] keys this the same way it keys a sponsored execution.
+pub async fn handle_deploy_request_event(
+    event: &Event,
+    chain: &impl Chain,
+    submitter: &impl Submitter,
+    config: &ChainConfig,
+    min_balance: u128,
+) -> SponsorResult {
+    let Some(d) = d_tag(event) else {
+        return SponsorResult::Declined {
+            nonce: String::new(),
+            reason: "missing d tag; the request must be addressable by its chain id".into(),
+        };
+    };
+
+    let request = match DeployRequest::from_json(&event.content) {
+        Ok(r) => r,
+        Err(e) => {
+            return SponsorResult::Declined {
+                nonce: d,
+                reason: e.to_string(),
+            };
+        }
+    };
+
+    let author = event.pubkey.to_hex();
+    let calls =
+        match service_deploy_request(chain, config, &author, &request, &d, min_balance).await {
+            Ok(calls) => calls,
+            Err(e) => {
+                return SponsorResult::Declined {
+                    nonce: request.chain_id,
+                    reason: e.to_string(),
+                };
+            }
+        };
+
+    match submitter.submit(calls).await {
+        Ok(tx) => SponsorResult::Submitted {
+            nonce: request.chain_id,
+            transaction_hash: format!("{tx:#x}"),
+            // Always true here: a deployment request that reaches submission deploys,
+            // and one that would not have was already declined as "already deployed".
+            deployed: true,
+        },
+        Err(e) => SponsorResult::Declined {
+            nonce: request.chain_id,
+            reason: format!("submission failed: {e}"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,10 +251,20 @@ mod tests {
     /// Inside every fixture's `[1000, 2000]` window, with margin to spare.
     const NOW: u64 = 1_500;
 
-    struct Chain0(bool);
+    /// `.0` is whether the account exists; `.1` is its fee-token balance.
+    struct Chain0(bool, u128);
+    impl Chain0 {
+        /// Funded well above the floor, for tests where funding is not the subject.
+        fn funded(deployed: bool) -> Self {
+            Self(deployed, 5_000_000_000_000_000_000)
+        }
+    }
     impl Chain for Chain0 {
         async fn is_deployed(&self, _a: Felt) -> Result<bool, SponsorError> {
             Ok(self.0)
+        }
+        async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
+            Ok(self.1)
         }
     }
     struct OkSubmit;
@@ -215,6 +285,7 @@ mod tests {
             class_hash: Felt::from_hex_unchecked(CLASS_HASH),
             udc: crate::UDC_MAINNET,
             chain_id: starknet_core::utils::cairo_short_string_to_felt("SN_MAIN").unwrap(),
+            fee_token: crate::STRK_MAINNET,
         }
     }
 
@@ -245,7 +316,7 @@ mod tests {
     async fn a_valid_request_from_a_new_account_reports_deployment() {
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0x2a")),
-            &Chain0(false),
+            &Chain0::funded(false),
             &OkSubmit,
             &cfg(),
             NOW,
@@ -272,7 +343,7 @@ mod tests {
     async fn an_existing_account_reports_no_deployment() {
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0x2a")),
-            &Chain0(true),
+            &Chain0::funded(true),
             &OkSubmit,
             &cfg(),
             NOW,
@@ -293,7 +364,7 @@ mod tests {
         // twice.
         let r = handle_request_event(
             &event(payload("0x2a"), None),
-            &Chain0(true),
+            &Chain0::funded(true),
             &OkSubmit,
             &cfg(),
             NOW,
@@ -306,7 +377,7 @@ mod tests {
     async fn a_nonce_that_disagrees_with_the_d_tag_is_declined() {
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0xother")),
-            &Chain0(true),
+            &Chain0::funded(true),
             &OkSubmit,
             &cfg(),
             NOW,
@@ -323,7 +394,7 @@ mod tests {
                 r#"{"chain_id":"SN_MAIN","address":"0x1"}"#.into(),
                 Some("SN_MAIN"),
             ),
-            &Chain0(true),
+            &Chain0::funded(true),
             &OkSubmit,
             &cfg(),
             NOW,
@@ -338,7 +409,7 @@ mod tests {
         // down, so every outcome must be publishable.
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0x2a")),
-            &Chain0(true),
+            &Chain0::funded(true),
             &FailSubmit,
             &cfg(),
             NOW,
@@ -370,7 +441,7 @@ mod tests {
         // would be a guaranteed revert the sponsor still pays for.
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0x2a")),
-            &Chain0(true),
+            &Chain0::funded(true),
             &NeverSubmit,
             &cfg(),
             5_000,
@@ -391,7 +462,7 @@ mod tests {
         let now = 2_000 - SUBMISSION_MARGIN_SECS;
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0x2a")),
-            &Chain0(true),
+            &Chain0::funded(true),
             &NeverSubmit,
             &cfg(),
             now,
@@ -404,7 +475,7 @@ mod tests {
     async fn a_window_that_has_not_opened_yet_is_refused() {
         let r = handle_request_event(
             &event(payload("0x2a"), Some("0x2a")),
-            &Chain0(true),
+            &Chain0::funded(true),
             &NeverSubmit,
             &cfg(),
             500,
@@ -416,6 +487,203 @@ mod tests {
             }
             other => panic!("expected Declined, got {other:?}"),
         }
+    }
+
+    // ── The funded-wallet trigger ─────────────────────────────────────────────
+
+    /// One STRK — the default funding floor.
+    const FLOOR: u128 = 1_000_000_000_000_000_000;
+
+    /// A kind:30902 deployment request, `d` tag = chain id.
+    fn deploy_event(chain_id: &str, d: Option<&str>) -> Event {
+        let mut builder = EventBuilder::new(
+            Kind::Custom(buzz_core::kind::KIND_SPONSOR_DEPLOY_REQUEST as u16),
+            serde_json::json!({ "chain_id": chain_id }).to_string(),
+        );
+        if let Some(d) = d {
+            builder = builder.tag(Tag::identifier(d));
+        }
+        builder.sign_with_keys(&Keys::generate()).expect("sign")
+    }
+
+    #[tokio::test]
+    async fn a_funded_undeployed_account_is_deployed() {
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_MAIN", Some("SN_MAIN")),
+            &Chain0(false, FLOOR),
+            &OkSubmit,
+            &cfg(),
+            FLOOR,
+        )
+        .await;
+        match r {
+            SponsorResult::Submitted {
+                deployed,
+                nonce,
+                transaction_hash,
+            } => {
+                assert!(deployed);
+                assert_eq!(nonce, "SN_MAIN", "the chain id is the correlation key here");
+                assert_eq!(transaction_hash, "0xdeadbeef");
+            }
+            other => panic!("expected Submitted, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_deployment_is_one_call_with_no_outside_execution() {
+        // The whole economic point: no execute_from_outside_v2 means none of the
+        // ~0.78 STRK of on-chain BIP-340 verification. Deploying on funding is
+        // cheaper than deploying as part of a first transaction.
+        let calls = crate::service_deploy_request(
+            &Chain0(false, FLOOR),
+            &cfg(),
+            "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9",
+            &DeployRequest {
+                chain_id: "SN_MAIN".into(),
+            },
+            "SN_MAIN",
+            FLOOR,
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.len(), 1, "the UDC deploy, and nothing else");
+        assert_eq!(calls[0].to, crate::UDC_MAINNET);
+    }
+
+    #[tokio::test]
+    async fn an_unfunded_account_is_not_deployed() {
+        // The guard that makes this trigger safe to expose: addresses are derivable
+        // from public pubkeys, so without a floor anyone could dust the whole
+        // membership into sponsored deployments.
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_MAIN", Some("SN_MAIN")),
+            &Chain0(false, FLOOR - 1),
+            &NeverSubmit,
+            &cfg(),
+            FLOOR,
+        )
+        .await;
+        match r {
+            SponsorResult::Declined { reason, .. } => {
+                assert!(reason.contains("below the"), "{reason}")
+            }
+            other => panic!("expected Declined, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_already_deployed_account_is_declined_before_the_balance_is_read() {
+        // Cheaper refusal first: paying to redeploy is pure waste, and there is no
+        // point asking about funding for something already done. A balance-erroring
+        // chain proves the order.
+        struct DeployedButBalanceErrors;
+        impl Chain for DeployedButBalanceErrors {
+            async fn is_deployed(&self, _a: Felt) -> Result<bool, SponsorError> {
+                Ok(true)
+            }
+            async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
+                panic!("the balance must not be read once the account exists");
+            }
+        }
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_MAIN", Some("SN_MAIN")),
+            &DeployedButBalanceErrors,
+            &NeverSubmit,
+            &cfg(),
+            FLOOR,
+        )
+        .await;
+        match r {
+            SponsorResult::Declined { reason, .. } => {
+                assert!(reason.contains("already deployed"), "{reason}")
+            }
+            other => panic!("expected Declined, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_deployment_request_for_another_chain_is_declined_for_free() {
+        // BrokenChain would error on any query, so Declined proves none was made.
+        struct BrokenChain;
+        impl Chain for BrokenChain {
+            async fn is_deployed(&self, _a: Felt) -> Result<bool, SponsorError> {
+                Err(SponsorError::Chain("must not be called".into()))
+            }
+            async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
+                Err(SponsorError::Chain("must not be called".into()))
+            }
+        }
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_SEPOLIA", Some("SN_SEPOLIA")),
+            &BrokenChain,
+            &NeverSubmit,
+            &cfg(),
+            FLOOR,
+        )
+        .await;
+        assert!(matches!(r, SponsorResult::Declined { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_chain_id_that_disagrees_with_the_d_tag_is_declined() {
+        // The d tag is the replaceable key. Letting it differ would give one member
+        // several deployment slots on one chain, and the dedupe set is keyed on it.
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_MAIN", Some("something-else")),
+            &Chain0(false, FLOOR),
+            &NeverSubmit,
+            &cfg(),
+            FLOOR,
+        )
+        .await;
+        assert!(matches!(r, SponsorResult::Declined { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_balance_that_cannot_be_read_is_not_treated_as_funded() {
+        // Nor as unfunded-and-forgotten: it must surface so a retry can succeed.
+        struct BalanceUnavailable;
+        impl Chain for BalanceUnavailable {
+            async fn is_deployed(&self, _a: Felt) -> Result<bool, SponsorError> {
+                Ok(false)
+            }
+            async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
+                Err(SponsorError::Chain("timeout".into()))
+            }
+        }
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_MAIN", Some("SN_MAIN")),
+            &BalanceUnavailable,
+            &NeverSubmit,
+            &cfg(),
+            FLOOR,
+        )
+        .await;
+        match r {
+            SponsorResult::Declined { reason, .. } => {
+                assert!(
+                    reason.contains("timeout"),
+                    "the cause must be visible: {reason}"
+                )
+            }
+            other => panic!("expected Declined, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_zero_floor_deploys_on_request_alone() {
+        // Documented behaviour rather than an accident: an operator who sets the
+        // floor to zero has chosen to deploy for any member who asks, funded or not.
+        let r = handle_deploy_request_event(
+            &deploy_event("SN_MAIN", Some("SN_MAIN")),
+            &Chain0(false, 0),
+            &OkSubmit,
+            &cfg(),
+            0,
+        )
+        .await;
+        assert!(matches!(r, SponsorResult::Submitted { .. }));
     }
 
     #[test]
@@ -473,8 +741,14 @@ mod tests {
             (payload("0x7"), Some("0x7")),
             ("garbage".to_string(), Some("0x7")),
         ] {
-            let r = handle_request_event(&event(content, d), &Chain0(true), &OkSubmit, &cfg(), NOW)
-                .await;
+            let r = handle_request_event(
+                &event(content, d),
+                &Chain0::funded(true),
+                &OkSubmit,
+                &cfg(),
+                NOW,
+            )
+            .await;
             assert_eq!(r.nonce(), "0x7");
         }
     }

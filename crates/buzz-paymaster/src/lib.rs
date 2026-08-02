@@ -20,12 +20,36 @@
 //! service, or submit a payload the user already signed — which is why the payload
 //! carries a nonce and an expiry window.
 //!
-//! # Deployment is lazy
+//! # Deployment is lazy, and has two triggers
 //!
 //! Account addresses are counterfactual: derivable from the pubkey alone, and able
-//! to receive funds before the account exists. So nothing is deployed at signup.
-//! An account is deployed on first use, which means the sponsor never pays for the
-//! majority of users who join and never transact.
+//! to receive funds before the account exists. So nothing is deployed at signup, and
+//! the sponsor never pays for the majority of users who join and never transact.
+//!
+//! Deployment then happens at whichever of these comes first:
+//!
+//! 1. **A first sponsored transaction** ([`buzz_core::kind::KIND_SPONSOR_REQUEST`]).
+//!    The deployment rides along in the same atomic multicall, so a user who wants
+//!    to *do* something never sees a separate step.
+//! 2. **The account being funded**
+//!    ([`buzz_core::kind::KIND_SPONSOR_DEPLOY_REQUEST`]). A user who has sent STRK to
+//!    their address and expects it to become real has nothing to sign and no
+//!    transaction to make, and would otherwise have to spend ~0.92 STRK deploying it
+//!    themselves.
+//!
+//! The second is *cheaper* than the first: its multicall is the UDC deploy alone,
+//! with no `execute_from_outside_v2`, so it skips the ~0.78 STRK of on-chain BIP-340
+//! verification.
+//!
+//! ## Why the funding trigger needs a floor
+//!
+//! Addresses derive from Nostr pubkeys, and pubkeys are public on the relay — so
+//! anyone can compute every member's address and send dust to it. The member's own
+//! signed event is what asks for the deployment, but a client that watches its
+//! balance would ask automatically, so dust alone could set it off. A minimum
+//! balance ([`config::DEFAULT_MIN_DEPLOY_BALANCE`], read from the chain and never
+//! from the request) makes dusting the membership cost the attacker roughly what it
+//! costs the sponsor.
 //!
 //! # Layering
 //!
@@ -76,7 +100,42 @@ pub trait Chain {
         &self,
         address: Felt,
     ) -> impl std::future::Future<Output = Result<bool, SponsorError>> + Send;
+
+    /// The `token` balance held at `address`, in the token's smallest unit.
+    ///
+    /// Used to decide whether an account has been *funded*, which is what
+    /// authorises sponsoring its deployment. An address that does not exist yet
+    /// still has a balance — that is the whole point of a counterfactual address —
+    /// so this must answer for undeployed addresses too rather than erroring.
+    ///
+    /// Returned as `u128` rather than a full `u256`: STRK's supply cannot approach
+    /// 2^128 in its smallest unit, and the value is only ever compared against a
+    /// small threshold. An implementation that finds a non-zero high limb should
+    /// saturate rather than truncate — reading a huge balance as a small one would
+    /// refuse to deploy a genuinely funded account.
+    fn balance_of(
+        &self,
+        token: Felt,
+        address: Felt,
+    ) -> impl std::future::Future<Output = Result<u128, SponsorError>> + Send;
 }
+
+/// The STRK fee token on Starknet mainnet.
+///
+/// Provenance, stated so it can be re-checked rather than trusted: verified live
+/// against `mainnet.nodes.starknet.org`, where `symbol()` returns `STRK` — see
+/// `rpc::tests::the_documented_fee_token_is_strk_on_mainnet`, an `#[ignore]`d test
+/// that makes the check reproducible instead of a claim in a comment. Run it with:
+///
+/// ```text
+/// cargo test -p buzz-paymaster -- --ignored the_documented_fee_token
+/// ```
+///
+/// A wrong token address here reads every balance as zero, so every deployment
+/// request would be refused as unfunded — a visible failure rather than a costly
+/// one, but a confusing one to debug.
+pub const STRK_MAINNET: Felt =
+    Felt::from_hex_unchecked("0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d");
 
 /// The chain the sponsor operates on, and what it deploys there.
 ///
@@ -94,6 +153,12 @@ pub struct ChainConfig {
     /// Read from the node rather than configured, so it cannot disagree with the
     /// chain the sponsor is actually submitting to.
     pub chain_id: Felt,
+    /// Token whose balance decides whether an account counts as funded.
+    ///
+    /// [`STRK_MAINNET`] on mainnet. A parameter rather than a constant because the
+    /// address differs per network, and a wrong one reads every balance as zero —
+    /// refusing every deployment request as unfunded.
+    pub fee_token: Felt,
 }
 
 impl ChainConfig {
@@ -273,6 +338,87 @@ pub fn build_atomic_calls(
     Ok(calls)
 }
 
+/// Builds the one call that deploys a member's account and nothing else.
+///
+/// This is the funded-wallet trigger: no SNIP-9 payload, no
+/// `execute_from_outside_v2`, so none of the ~0.78 STRK of on-chain BIP-340
+/// verification. Deploying this way costs the sponsor strictly less than deploying
+/// as a side effect of a first sponsored transaction.
+///
+/// Authorisation is the event signature the relay already verified, and the address
+/// is derived from the author — so the only account a member can ask to have
+/// deployed is their own, owned by their own pubkey.
+pub fn build_deploy_only_calls(
+    config: &ChainConfig,
+    nostr_pubkey: &str,
+) -> Result<Vec<Call>, SponsorError> {
+    Ok(vec![Call {
+        to: config.udc,
+        selector: get_selector_from_name(UDC_DEPLOY_CONTRACT_SELECTOR)
+            .map_err(|e| SponsorError::Config(format!("bad UDC selector: {e}")))?,
+        calldata: udc_deploy_calldata(config.class_hash, nostr_pubkey)?,
+    }])
+}
+
+/// Decides whether to sponsor deploying a funded account, and builds the call.
+///
+/// Refuses, in order of how little it costs to find out:
+/// 1. Wrong chain — no RPC at all.
+/// 2. Already deployed — one RPC, and paying again would be pure waste.
+/// 3. Not funded to `min_balance` — one more RPC.
+///
+/// The balance is read from the chain, never taken from the request, which is what
+/// makes "funded" mean funded rather than claimed.
+pub async fn service_deploy_request(
+    chain: &impl Chain,
+    config: &ChainConfig,
+    author_pubkey: &str,
+    request: &buzz_core::sponsorship::DeployRequest,
+    d_tag: &str,
+    min_balance: u128,
+) -> Result<Vec<Call>, SponsorError> {
+    request
+        .validate()
+        .map_err(|e| SponsorError::Declined(e.to_string()))?;
+    if !config.chain_id_matches(&request.chain_id) {
+        return Err(SponsorError::Declined(format!(
+            "request is for chain {:?}, but this sponsor serves {:#x}",
+            request.chain_id, config.chain_id
+        )));
+    }
+    if !request.chain_id_matches_d_tag(d_tag) {
+        // The d tag is the replaceable key. Letting it differ from the chain id would
+        // give one member several deployment slots on one chain, and the dedupe set
+        // is keyed on it.
+        return Err(SponsorError::Declined(format!(
+            "chain_id {} does not match the event d tag {d_tag}",
+            request.chain_id
+        )));
+    }
+
+    let plan = plan_for(chain, config.class_hash, author_pubkey).await?;
+    if !plan.deploys() {
+        // Not an error: the member asked for something that has already happened.
+        return Err(SponsorError::Declined(
+            "account is already deployed; nothing to do".into(),
+        ));
+    }
+
+    // The funding check, and the reason this trigger is safe to expose. Anyone can
+    // send dust to any member's address — addresses are derivable from public
+    // pubkeys — so without a floor, dusting the membership would turn into a
+    // sponsored deployment for each of them.
+    let balance = chain.balance_of(config.fee_token, plan.address()).await?;
+    if balance < min_balance {
+        return Err(SponsorError::Declined(format!(
+            "account holds {balance} of the fee token, below the {min_balance} \
+             required to sponsor a deployment"
+        )));
+    }
+
+    build_deploy_only_calls(config, author_pubkey)
+}
+
 /// Turns a member's published request into the calls that service it.
 ///
 /// This is the whole service path: parse, refuse anything that cannot succeed,
@@ -358,17 +504,37 @@ mod tests {
     /// configuration, since a class hash changes with any contract edit.
     const CLASS_HASH: &str = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537";
 
+    /// One STRK, the default funding floor.
+    const ONE_STRK: u128 = 1_000_000_000_000_000_000;
+
     struct FakeChain {
         deployed: bool,
+        balance: u128,
+    }
+    impl FakeChain {
+        /// Funded well above the floor, for the tests where funding is not the
+        /// subject.
+        fn funded(deployed: bool) -> Self {
+            Self {
+                deployed,
+                balance: ONE_STRK * 5,
+            }
+        }
     }
     impl Chain for FakeChain {
         async fn is_deployed(&self, _address: Felt) -> Result<bool, SponsorError> {
             Ok(self.deployed)
         }
+        async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
+            Ok(self.balance)
+        }
     }
     struct BrokenChain;
     impl Chain for BrokenChain {
         async fn is_deployed(&self, _address: Felt) -> Result<bool, SponsorError> {
+            Err(SponsorError::Chain("timeout".into()))
+        }
+        async fn balance_of(&self, _t: Felt, _a: Felt) -> Result<u128, SponsorError> {
             Err(SponsorError::Chain("timeout".into()))
         }
     }
@@ -383,12 +549,13 @@ mod tests {
             class_hash: class_hash(),
             udc: UDC_MAINNET,
             chain_id: starknet_core::utils::cairo_short_string_to_felt("SN_MAIN").unwrap(),
+            fee_token: STRK_MAINNET,
         }
     }
 
     #[tokio::test]
     async fn undeployed_accounts_are_planned_for_deployment() {
-        let plan = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY)
+        let plan = plan_for(&FakeChain::funded(false), class_hash(), PUBKEY)
             .await
             .unwrap();
         assert!(plan.deploys());
@@ -396,7 +563,7 @@ mod tests {
 
     #[tokio::test]
     async fn deployed_accounts_skip_deployment() {
-        let plan = plan_for(&FakeChain { deployed: true }, class_hash(), PUBKEY)
+        let plan = plan_for(&FakeChain::funded(true), class_hash(), PUBKEY)
             .await
             .unwrap();
         assert!(!plan.deploys(), "paying to redeploy would be pure waste");
@@ -415,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn the_planned_address_is_the_one_clients_derive() {
         // If these ever diverge, the sponsor funds an address no client can reach.
-        let plan = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY)
+        let plan = plan_for(&FakeChain::funded(false), class_hash(), PUBKEY)
             .await
             .unwrap();
         let expected = buzz_core::starknet_account::account_address(class_hash(), PUBKEY).unwrap();
@@ -425,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn a_bad_pubkey_is_a_config_error_not_a_panic() {
         assert!(matches!(
-            plan_for(&FakeChain { deployed: false }, class_hash(), "nonsense").await,
+            plan_for(&FakeChain::funded(false), class_hash(), "nonsense").await,
             Err(SponsorError::Config(_))
         ));
     }
@@ -474,10 +641,10 @@ mod tests {
     #[tokio::test]
     async fn different_pubkeys_get_different_accounts() {
         let other = "dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659";
-        let a = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY)
+        let a = plan_for(&FakeChain::funded(false), class_hash(), PUBKEY)
             .await
             .unwrap();
-        let b = plan_for(&FakeChain { deployed: false }, class_hash(), other)
+        let b = plan_for(&FakeChain::funded(false), class_hash(), other)
             .await
             .unwrap();
         assert_ne!(a.address(), b.address());
@@ -502,7 +669,7 @@ mod tests {
     }
 
     async fn calls_for(deployed: bool) -> Vec<Call> {
-        let plan = plan_for(&FakeChain { deployed }, class_hash(), PUBKEY)
+        let plan = plan_for(&FakeChain::funded(deployed), class_hash(), PUBKEY)
             .await
             .unwrap();
         build_atomic_calls(&plan, &cfg(), PUBKEY, &an_execution(), &a_signature()).unwrap()
@@ -609,7 +776,7 @@ mod tests {
     #[tokio::test]
     async fn a_request_from_a_new_member_deploys_and_executes() {
         let calls = service_request(
-            &FakeChain { deployed: false },
+            &FakeChain::funded(false),
             &cfg(),
             PUBKEY,
             &a_request(),
@@ -624,7 +791,7 @@ mod tests {
     #[tokio::test]
     async fn a_request_from_an_existing_member_only_executes() {
         let calls = service_request(
-            &FakeChain { deployed: true },
+            &FakeChain::funded(true),
             &cfg(),
             PUBKEY,
             &a_request(),
@@ -641,7 +808,7 @@ mod tests {
         // author, so deriving from the author is what stops one member requesting
         // sponsorship into another member's account.
         let calls = service_request(
-            &FakeChain { deployed: true },
+            &FakeChain::funded(true),
             &cfg(),
             PUBKEY,
             &a_request(),
@@ -658,7 +825,7 @@ mod tests {
     #[tokio::test]
     async fn a_nonce_that_disagrees_with_the_d_tag_is_declined() {
         let err = service_request(
-            &FakeChain { deployed: true },
+            &FakeChain::funded(true),
             &cfg(),
             PUBKEY,
             &a_request(),
@@ -710,7 +877,7 @@ mod tests {
         let mut r = a_request();
         r.calls[0].to = "not-a-felt".into();
         assert!(matches!(
-            service_request(&FakeChain { deployed: true }, &cfg(), PUBKEY, &r, "0x2a").await,
+            service_request(&FakeChain::funded(true), &cfg(), PUBKEY, &r, "0x2a").await,
             Err(SponsorError::Declined(_))
         ));
     }

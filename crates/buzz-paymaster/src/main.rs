@@ -15,7 +15,19 @@
 //! ```
 //!
 //! Optional: `BUZZ_PAYMASTER_UDC`, `BUZZ_PAYMASTER_AUTH_TAG`,
-//! `BUZZ_PAYMASTER_MAX_FEE_FRI`, `RUST_LOG`.
+//! `BUZZ_PAYMASTER_MAX_FEE_FRI`, `BUZZ_PAYMASTER_FEE_TOKEN`,
+//! `BUZZ_PAYMASTER_MIN_DEPLOY_BALANCE`, `RUST_LOG`.
+//!
+//! # What it does
+//!
+//! Subscribes to two request kinds and answers both on kind:30901:
+//!
+//! - **30900**, a sponsored SNIP-9 execution. Deploys the account in the same atomic
+//!   multicall if it does not exist yet.
+//! - **30902**, "my account is funded, please deploy it." The UDC deploy alone, which
+//!   is cheaper — no `execute_from_outside_v2`, so none of the ~0.78 STRK of on-chain
+//!   BIP-340 verification. Requires the address to hold
+//!   `BUZZ_PAYMASTER_MIN_DEPLOY_BALANCE`, read from the chain.
 //!
 //! # Run one instance
 //!
