@@ -39,6 +39,8 @@ use buzz_core::sponsorship::SponsorRequest;
 use starknet_core::types::{Call, Felt};
 use starknet_core::utils::get_selector_from_name;
 
+pub mod rpc;
+
 /// Errors from sponsorship.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SponsorError {
@@ -65,7 +67,10 @@ pub trait Chain {
     /// found" as `false` rather than an error, and anything else as an error: a
     /// transport failure must not be read as "not deployed", or the sponsor would
     /// pay to deploy an account that already exists.
-    fn is_deployed(&self, address: Felt) -> Result<bool, SponsorError>;
+    fn is_deployed(
+        &self,
+        address: Felt,
+    ) -> impl std::future::Future<Output = Result<bool, SponsorError>> + Send;
 }
 
 /// What the sponsor must do to service a request.
@@ -108,14 +113,14 @@ impl SponsorPlan {
 /// chain whether it exists. The address is *always* derived rather than accepted
 /// from the caller: taking a caller-supplied address would let anyone direct a
 /// sponsored deployment at an arbitrary contract.
-pub fn plan_for(
+pub async fn plan_for(
     chain: &impl Chain,
     class_hash: Felt,
     nostr_pubkey: &str,
 ) -> Result<SponsorPlan, SponsorError> {
     let address = buzz_core::starknet_account::account_address(class_hash, nostr_pubkey)
         .map_err(|e| SponsorError::Config(format!("cannot derive address: {e}")))?;
-    if chain.is_deployed(address)? {
+    if chain.is_deployed(address).await? {
         Ok(SponsorPlan::ExecuteOnly { address })
     } else {
         Ok(SponsorPlan::DeployThenExecute { address })
@@ -236,7 +241,7 @@ pub fn build_atomic_calls(
 /// what stops one member requesting sponsorship into another member's account: the
 /// relay has already verified the event signature, so the author is attested, and
 /// the account address is derived from it rather than supplied.
-pub fn service_request(
+pub async fn service_request(
     chain: &impl Chain,
     class_hash: Felt,
     author_pubkey: &str,
@@ -287,7 +292,7 @@ pub fn service_request(
         signature[i] = felt("signature", s)?;
     }
 
-    let plan = plan_for(chain, class_hash, author_pubkey)?;
+    let plan = plan_for(chain, class_hash, author_pubkey).await?;
     build_atomic_calls(
         &plan,
         udc,
@@ -315,13 +320,13 @@ mod tests {
         deployed: bool,
     }
     impl Chain for FakeChain {
-        fn is_deployed(&self, _address: Felt) -> Result<bool, SponsorError> {
+        async fn is_deployed(&self, _address: Felt) -> Result<bool, SponsorError> {
             Ok(self.deployed)
         }
     }
     struct BrokenChain;
     impl Chain for BrokenChain {
-        fn is_deployed(&self, _address: Felt) -> Result<bool, SponsorError> {
+        async fn is_deployed(&self, _address: Felt) -> Result<bool, SponsorError> {
             Err(SponsorError::Chain("timeout".into()))
         }
     }
@@ -330,40 +335,46 @@ mod tests {
         Felt::from_hex_unchecked(CLASS_HASH)
     }
 
-    #[test]
-    fn undeployed_accounts_are_planned_for_deployment() {
-        let plan = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY).unwrap();
+    #[tokio::test]
+    async fn undeployed_accounts_are_planned_for_deployment() {
+        let plan = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY)
+            .await
+            .unwrap();
         assert!(plan.deploys());
     }
 
-    #[test]
-    fn deployed_accounts_skip_deployment() {
-        let plan = plan_for(&FakeChain { deployed: true }, class_hash(), PUBKEY).unwrap();
+    #[tokio::test]
+    async fn deployed_accounts_skip_deployment() {
+        let plan = plan_for(&FakeChain { deployed: true }, class_hash(), PUBKEY)
+            .await
+            .unwrap();
         assert!(!plan.deploys(), "paying to redeploy would be pure waste");
     }
 
-    #[test]
-    fn a_chain_error_is_never_read_as_not_deployed() {
+    #[tokio::test]
+    async fn a_chain_error_is_never_read_as_not_deployed() {
         // The dangerous misreading: treat a timeout as "does not exist" and pay to
         // deploy over a live account.
         assert!(matches!(
-            plan_for(&BrokenChain, class_hash(), PUBKEY),
+            plan_for(&BrokenChain, class_hash(), PUBKEY).await,
             Err(SponsorError::Chain(_))
         ));
     }
 
-    #[test]
-    fn the_planned_address_is_the_one_clients_derive() {
+    #[tokio::test]
+    async fn the_planned_address_is_the_one_clients_derive() {
         // If these ever diverge, the sponsor funds an address no client can reach.
-        let plan = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY).unwrap();
+        let plan = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY)
+            .await
+            .unwrap();
         let expected = buzz_core::starknet_account::account_address(class_hash(), PUBKEY).unwrap();
         assert_eq!(plan.address(), expected);
     }
 
-    #[test]
-    fn a_bad_pubkey_is_a_config_error_not_a_panic() {
+    #[tokio::test]
+    async fn a_bad_pubkey_is_a_config_error_not_a_panic() {
         assert!(matches!(
-            plan_for(&FakeChain { deployed: false }, class_hash(), "nonsense"),
+            plan_for(&FakeChain { deployed: false }, class_hash(), "nonsense").await,
             Err(SponsorError::Config(_))
         ));
     }
@@ -409,11 +420,15 @@ mod tests {
         assert_eq!(recomputed, derived);
     }
 
-    #[test]
-    fn different_pubkeys_get_different_accounts() {
+    #[tokio::test]
+    async fn different_pubkeys_get_different_accounts() {
         let other = "dff1d77f2a671c5f36183726db2341be58feae1da2deced843240f7b502ba659";
-        let a = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY).unwrap();
-        let b = plan_for(&FakeChain { deployed: false }, class_hash(), other).unwrap();
+        let a = plan_for(&FakeChain { deployed: false }, class_hash(), PUBKEY)
+            .await
+            .unwrap();
+        let b = plan_for(&FakeChain { deployed: false }, class_hash(), other)
+            .await
+            .unwrap();
         assert_ne!(a.address(), b.address());
     }
 
@@ -435,8 +450,10 @@ mod tests {
         [Felt::ONE, Felt::TWO, Felt::THREE, Felt::from(4_u32)]
     }
 
-    fn calls_for(deployed: bool) -> Vec<Call> {
-        let plan = plan_for(&FakeChain { deployed }, class_hash(), PUBKEY).unwrap();
+    async fn calls_for(deployed: bool) -> Vec<Call> {
+        let plan = plan_for(&FakeChain { deployed }, class_hash(), PUBKEY)
+            .await
+            .unwrap();
         build_atomic_calls(
             &plan,
             UDC_MAINNET,
@@ -448,9 +465,9 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn an_existing_account_gets_one_call() {
-        let calls = calls_for(true);
+    #[tokio::test]
+    async fn an_existing_account_gets_one_call() {
+        let calls = calls_for(true).await;
         assert_eq!(calls.len(), 1, "no deployment should be paid for");
         assert_eq!(
             calls[0].to,
@@ -462,9 +479,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_new_account_gets_deploy_then_execute_in_that_order() {
-        let calls = calls_for(false);
+    #[tokio::test]
+    async fn a_new_account_gets_deploy_then_execute_in_that_order() {
+        let calls = calls_for(false).await;
         assert_eq!(calls.len(), 2);
         // Order is the whole point: reversed, the execute call would target an
         // address with no contract at it and the transaction would revert after the
@@ -481,24 +498,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_deploy_call_creates_the_account_the_execute_call_targets() {
+    #[tokio::test]
+    async fn the_deploy_call_creates_the_account_the_execute_call_targets() {
         // The two calls must agree, or the multicall deploys one account and calls
         // another. Recompute the deployed address from the deploy calldata itself.
-        let calls = calls_for(false);
+        let calls = calls_for(false).await;
         let d = &calls[0].calldata;
         let recomputed =
             starknet_core::utils::get_contract_address(d[1], d[0], &d[4..], Felt::ZERO);
         assert_eq!(recomputed, calls[1].to);
     }
 
-    #[test]
-    fn the_signed_payload_is_passed_through_unaltered() {
+    #[tokio::test]
+    async fn the_signed_payload_is_passed_through_unaltered() {
         // The sponsor must not be able to change what executes. Whatever the user
         // signed is what goes on the wire.
         let exec = an_execution();
         let sig = a_signature();
-        let calls = calls_for(true);
+        let calls = calls_for(true).await;
         assert_eq!(
             calls[0].calldata,
             buzz_core::outside_execution::execute_from_outside_calldata(&exec, &sig)
@@ -553,8 +570,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_request_from_a_new_member_deploys_and_executes() {
+    #[tokio::test]
+    async fn a_request_from_a_new_member_deploys_and_executes() {
         let calls = service_request(
             &FakeChain { deployed: false },
             class_hash(),
@@ -563,13 +580,14 @@ mod tests {
             &a_request(),
             "0x2a",
         )
+        .await
         .unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].to, UDC_MAINNET);
     }
 
-    #[test]
-    fn a_request_from_an_existing_member_only_executes() {
+    #[tokio::test]
+    async fn a_request_from_an_existing_member_only_executes() {
         let calls = service_request(
             &FakeChain { deployed: true },
             class_hash(),
@@ -578,12 +596,13 @@ mod tests {
             &a_request(),
             "0x2a",
         )
+        .await
         .unwrap();
         assert_eq!(calls.len(), 1);
     }
 
-    #[test]
-    fn the_account_is_derived_from_the_event_author_not_the_payload() {
+    #[tokio::test]
+    async fn the_account_is_derived_from_the_event_author_not_the_payload() {
         // The payload carries no address at all, by design: the relay attests the
         // author, so deriving from the author is what stops one member requesting
         // sponsorship into another member's account.
@@ -595,6 +614,7 @@ mod tests {
             &a_request(),
             "0x2a",
         )
+        .await
         .unwrap();
         assert_eq!(
             calls[0].to,
@@ -602,8 +622,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_nonce_that_disagrees_with_the_d_tag_is_declined() {
+    #[tokio::test]
+    async fn a_nonce_that_disagrees_with_the_d_tag_is_declined() {
         let err = service_request(
             &FakeChain { deployed: true },
             class_hash(),
@@ -611,12 +631,13 @@ mod tests {
             UDC_MAINNET,
             &a_request(),
             "0xdifferent",
-        );
+        )
+        .await;
         assert!(matches!(err, Err(SponsorError::Declined(_))));
     }
 
-    #[test]
-    fn an_invalid_request_is_declined_before_any_chain_query() {
+    #[tokio::test]
+    async fn an_invalid_request_is_declined_before_any_chain_query() {
         // BrokenChain errors on any query, so reaching it would fail with Chain
         // rather than Declined. Getting Declined proves validation ran first —
         // which is the point: a bad request must not cost a round trip, let alone a
@@ -624,13 +645,13 @@ mod tests {
         let mut r = a_request();
         r.calls.clear();
         assert!(matches!(
-            service_request(&BrokenChain, class_hash(), PUBKEY, UDC_MAINNET, &r, "0x2a"),
+            service_request(&BrokenChain, class_hash(), PUBKEY, UDC_MAINNET, &r, "0x2a").await,
             Err(SponsorError::Declined(_))
         ));
     }
 
-    #[test]
-    fn unparseable_felts_are_declined_not_panics() {
+    #[tokio::test]
+    async fn unparseable_felts_are_declined_not_panics() {
         let mut r = a_request();
         r.calls[0].to = "not-a-felt".into();
         assert!(matches!(
@@ -641,7 +662,8 @@ mod tests {
                 UDC_MAINNET,
                 &r,
                 "0x2a"
-            ),
+            )
+            .await,
             Err(SponsorError::Declined(_))
         ));
     }
