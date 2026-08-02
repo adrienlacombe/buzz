@@ -174,6 +174,7 @@ place.
 | `migrations/0027_wallet_binding_fts.sql`, `0028_wallet_binding_fts_kind_move.sql` | new, and **kept after the feature was removed** | Search exclusions for the withdrawn NIP-SW wallet binding. They have already run on live databases and sqlx checksums applied migrations, so deleting them breaks startup validation. What they leave behind — a `search_tsv` expression excluding a kind nobody publishes — is inert, and unwinding it would rewrite a generated column across the whole events table for nothing. **Never edit or delete an applied migration**; add a follow-on |
 | `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 28, not upstream's 26 | Counts embedded migrations, so it moves whenever the fork adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. A one-integer conflict on every upstream migration — take upstream's count and add the fork's two |
 | `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name. Sets `signingIdentity: "-"` in its inline config and runs **without** `--no-sign`, which would silently discard it; asserts the bundle signature of the `.app` inside the mounted DMG |
+| `Dockerfile` | `buzz-paymaster` added to the cargo build, the strip step, and both `COPY` stages | The sponsor ships in the relay's image so there is one publish pipeline and one immutable `:sha-<7>` tag for `deploy-aws.yml` to pin. Four one-line additions, each inside an existing parallel list, so a conflict resolves as *keep ours, take upstream's*. It is **not** the `ENTRYPOINT` — `infra/aws/paymaster.tf` overrides `entryPoint` |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | The two locks pin mesh-llm independently (desktop is outside the root workspace) and can name different revs — at the time of the patch, root `tag=v0.73.1` (`43103c5c`) vs desktop `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit. **Since the 2026-07-31 sync both locks pin `tag=v0.74.0` (`e60b2fe4`), so the patch is a temporary no-op — do not delete it.** The locks stay independent; the next bump that moves one and not the other re-breaks the root-lock version |
@@ -434,6 +435,33 @@ formats it.
 The daemon is `cargo run -p buzz-paymaster`. It listens on **no port** — it connects
 out — and its required environment is documented at the top of
 `crates/buzz-paymaster/src/main.rs`.
+
+#### Deployment
+
+Everything lives in `infra/aws/paymaster.tf`, one additive file: its own security
+group (egress only, **no ingress rule at all**), its own IAM roles, its own secret.
+Separate from the relay's so a compromise of one task cannot read the other's
+credentials — with a shared execution role it could.
+
+It runs the **relay's image** with `entryPoint` overridden, which is why `Dockerfile`
+carries a fork patch adding `buzz-paymaster` to its four binary lists. A second image
+would need a second publish workflow, and `deploy-aws.yml` pins the commit's
+immutable `:sha-<7>` tag — so it would have to wait on both pipelines or fall back to
+a floating tag, losing the property the deploy depends on.
+
+**Off by default**: `paymaster_desired_count = 0` and a blank
+`paymaster_account_class_hash`, either of which alone holds the service at zero
+tasks. Before enabling it, `infra/aws/bootstrap/` must be re-applied — `oidc.tf`
+gained the paymaster's two role ARNs under `PassExecutionAndTaskRoles`, without which
+CI cannot register the task definition, and it extends the `GetSecretValue` Deny to
+the sponsor's key so a workflow assuming the deploy role cannot read a credential
+that spends money. See [`infra/aws/README.md`](infra/aws/README.md#turning-it-on).
+
+While wiring this up, `BUZZ_STARKNET_RPC_SN_MAIN` was found still being injected into
+every relay task by `ecs.tf`, with a comment pointing at kind:30178 — NIP-SW's
+withdrawal removed the only code that read it, and upstream has since given that
+integer to `KIND_TEAM_CATALOG`. The variable is now `starknet_rpc_url` and feeds the
+paymaster.
 
 ### Repo settings (no file changes — preferred mechanism)
 

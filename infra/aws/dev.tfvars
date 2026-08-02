@@ -70,14 +70,30 @@ require_relay_membership = false
 # already in the image, so this only enables the route.
 serve_git_web_gui = true
 
-# ── NIP-SW Starknet wallet bindings ──────────────────────────────────────────
-# Endpoint the relay calls to verify kind:30178 attestations at ingest. Public
-# node, no API key, so it belongs in this committed file. Verified live:
-# starknet_chainId returns 0x534e5f4d41494e, i.e. genuinely mainnet.
+# ── Starknet ─────────────────────────────────────────────────────────────────
+# Public node, no API key, so it belongs in this committed file. Verified live:
+# starknet_chainId returns 0x534e5f4d41494e, i.e. genuinely mainnet. Note the
+# hostname ordering: nodes.starknet.org, not starknet.nodes.org.
 #
-# Verification fails closed — blank here means every SN_MAIN binding is rejected
-# rather than stored unverified.
-starknet_rpc_sn_main = "https://mainnet.nodes.starknet.org/rpc/v0_10"
+# Previously fed the relay for NIP-SW verification; now consumed by buzz-paymaster.
+starknet_rpc_url = "https://mainnet.nodes.starknet.org/rpc/v0_10"
+
+# ── Sponsorship (buzz-paymaster) ─────────────────────────────────────────────
+# Disabled. Turning it on needs three things that do not exist yet:
+#
+#   1. A funded Starknet account for the sponsor to spend from.
+#   2. Its address and signing key, plus a Nostr identity, written to the
+#      buzz-dev/paymaster secret out-of-band (the command is in paymaster.tf).
+#   3. One NostrAccount actually deployed and confirmed to land at the address
+#      `buzz wallet address` derives, so the UDC deploy_from_zero assumption is
+#      verified before the sponsor starts deploying accounts for other people.
+#
+# Until then desired_count stays 0 and the class hash stays blank, either of which
+# alone keeps the service at zero tasks. The class hash below is the SNIP-9 class
+# declared on mainnet 2026-08-02 (contracts/DEPLOYMENTS.md) — uncommented when (3)
+# is done.
+paymaster_desired_count = 0
+# paymaster_account_class_hash = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537"
 
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14

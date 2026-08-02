@@ -35,9 +35,20 @@ locals {
   execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-ecs-execution"
   task_role_arn      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-ecs-task"
 
+  # The paymaster runs under roles of its own rather than the relay's, so that a
+  # compromise of one task cannot read the other's secrets (../paymaster.tf).
+  # Without these two entries in PassExecutionAndTaskRoles below, registering its
+  # task definition fails from CI with an iam:PassRole AccessDenied.
+  paymaster_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-paymaster-execution"
+  paymaster_task_role_arn      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-paymaster-task"
+
   # Secrets Manager appends a random 6-character suffix, so the exact ARN is not
   # derivable from the name and this must be a prefix match.
   identity_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/relay-identity-*"
+
+  # The sponsor's Starknet signing key lives in here. Same reasoning as the relay
+  # identity, with more at stake: this one spends money.
+  paymaster_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/paymaster-*"
 }
 
 variable "project_name" {
@@ -222,6 +233,8 @@ resource "aws_iam_role_policy" "github_actions_iam" {
         Resource = [
           local.execution_role_arn,
           local.task_role_arn,
+          local.paymaster_execution_role_arn,
+          local.paymaster_task_role_arn,
         ]
         Condition = {
           StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" }
@@ -249,14 +262,22 @@ resource "aws_iam_role_policy" "github_actions_iam" {
       },
       {
         # PowerUserAccess already allows secretsmanager:*, and CI legitimately
-        # needs to manage the runtime secret. But the relay's identity key is
-        # never CI's business, so reading it is denied outright — which is also
-        # why ../secrets.tf deliberately does not manage that secret's version
-        # (Terraform reads a managed version back on every refresh).
-        Sid      = "DenyRelayIdentitySecretReads"
-        Effect   = "Deny"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [local.identity_secret_arn_pattern]
+        # needs to manage the runtime secret. But the relay's identity key and the
+        # sponsor's Starknet signing key are never CI's business, so reading them is
+        # denied outright — which is also why ../secrets.tf and ../paymaster.tf
+        # deliberately do not manage those secrets' versions (Terraform reads a
+        # managed version back on every refresh, which would require the Get).
+        #
+        # The paymaster entry is the one that matters most here: a workflow that
+        # could read it could drain the sponsor's account, and every push to main
+        # assumes this role.
+        Sid    = "DenyIdentityAndSponsorKeyReads"
+        Effect = "Deny"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          local.identity_secret_arn_pattern,
+          local.paymaster_secret_arn_pattern,
+        ]
       },
     ]
   })

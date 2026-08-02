@@ -51,6 +51,7 @@ RDS subnet group requires ≥2. "Single-AZ" refers to the RDS and Redis instance
 | `alb.tf` | ALB, target group, listeners |
 | `dns.tf` | ACM cert, validation records, alias record (conditional) |
 | `ecs.tf` | Cluster, IAM roles, task definition, service |
+| `paymaster.tf` | **Whole** `buzz-paymaster` service — its own SG, IAM roles and secret. Off by default |
 | `oidc.tf` | GitHub Actions deploy role (OIDC, no stored keys) |
 | `outputs.tf` | URLs, endpoints, next-step commands |
 | `dev.tfvars` | **Committed** config for the dev environment (no secrets) |
@@ -130,6 +131,56 @@ To add TLS:
 
 No NAT gateway, which would add ~$32/mo on its own. Tear down with
 `terraform destroy` when idle — the ALB and RDS are the expensive parts.
+
+Enabling the paymaster adds a second Fargate task at 0.25 vCPU / 0.5 GB, ~$9/mo.
+Its *real* cost is on chain, not here: every sponsored transaction pays ~0.78 STRK
+of BIP-340 verification, and that does not amortise. See
+[`contracts/DEPLOYMENTS.md`](../../contracts/DEPLOYMENTS.md).
+
+## Sponsorship (`buzz-paymaster`)
+
+Off by default and safe to ignore until you want it. `paymaster_desired_count` is 0
+and `paymaster_account_class_hash` is blank in `dev.tfvars`; either one alone keeps
+the service at zero tasks, so the stack applies cleanly with nothing running.
+
+Two properties are load-bearing, both explained at the top of `paymaster.tf`:
+
+- **It listens on no port.** The paymaster connects *out* to the relay as a Nostr
+  client and subscribes to kind:30900. No target group, and its security group has
+  no ingress rule at all — a funded service with nothing listening is a much smaller
+  target than one exposing an authenticated API. Do not add a health-check port.
+- **One task, ever.** Two would collide on the Starknet account nonce and both
+  service a request that arrived before either published its result — paying twice.
+  A variable validation refuses any count above 1.
+
+It runs the **same image as the relay** with the entrypoint overridden, so there is
+one publish pipeline and one immutable `:sha-<7>` tag for CD to pin. See the
+`FORK-LOCAL` note in the root `Dockerfile`.
+
+### Turning it on
+
+Three things must be true first, in this order:
+
+1. **The bootstrap stack is re-applied.** `oidc.tf` gained the paymaster's two role
+   ARNs under `PassExecutionAndTaskRoles`; without them CI cannot register the task
+   definition and the deploy fails with an `iam:PassRole` `AccessDenied`. The same
+   change extends the `GetSecretValue` Deny to the sponsor's key, which is what stops
+   a workflow that assumes the deploy role from reading a credential that can spend
+   money. **Apply `bootstrap/` before the main stack.**
+2. **A `NostrAccount` is deployed and confirmed** to land at the address
+   `buzz wallet address` derives. This verifies the UDC `deploy_from_zero`
+   assumption *before* the sponsor starts deploying accounts for other people; get
+   it wrong and every account lands where nobody can find it, holding whatever was
+   sent to the address the user was shown.
+3. **The secret holds a funded account.** Terraform never manages its version — see
+   the `put-secret-value` command in `paymaster.tf`.
+
+Then set `paymaster_account_class_hash` and `paymaster_desired_count = 1`.
+
+`BUZZ_PAYMASTER_MAX_FEE_FRI` caps what a single request can cost (default 10 STRK).
+It is a spending guard, not a per-member quota — there deliberately is no quota, and
+what stands in its place is that the sponsor estimates every transaction before
+sending, so anything that would revert is refused for free.
 
 ## Decisions worth knowing before changing them
 

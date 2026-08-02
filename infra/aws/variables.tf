@@ -248,24 +248,30 @@ variable "force_destroy_media_bucket" {
   default     = false
 }
 
-# ── NIP-SW Starknet wallet bindings ──────────────────────────────────────────
+# ── Starknet ─────────────────────────────────────────────────────────────────
 
-variable "starknet_rpc_sn_main" {
+variable "starknet_rpc_url" {
   description = <<-EOT
-    BUZZ_STARKNET_RPC_SN_MAIN. Starknet mainnet JSON-RPC endpoint the relay calls
-    to verify NIP-SW wallet-binding attestations (kind:30178) at ingest.
+    Starknet JSON-RPC endpoint, consumed by buzz-paymaster as
+    BUZZ_PAYMASTER_RPC_URL.
 
-    Verification FAILS CLOSED. Left empty, the relay rejects every SN_MAIN
-    binding rather than storing one it could not check — the intended default,
-    since a stored binding is supposed to mean an attested one.
+    Renamed from `starknet_rpc_sn_main`, which fed BUZZ_STARKNET_RPC_SN_MAIN on
+    the relay container for NIP-SW wallet-binding verification. NIP-SW was
+    withdrawn, so no relay code has read that variable since — it was being
+    injected into every task for nothing, with a comment pointing at kind:30178,
+    an integer that now means something else entirely upstream. The endpoint
+    itself is still wanted; only the consumer changed.
 
-    Operator-configured on purpose. A submitted event must never influence which
-    endpoint is trusted, or an attacker could point verification at a node that
-    answers VALID to everything.
+    Operator-configured on purpose: a submitted event must never influence which
+    node the sponsor trusts, and the sponsor decides whether an account is already
+    deployed from what this endpoint says.
 
-    Public endpoint, so a plain env var rather than a Secrets Manager entry. If
-    you move to a provider that embeds an API key in the URL, move this to the
-    `secrets` block in ecs.tf instead.
+    Note the hostname ordering for the public mainnet node:
+    `mainnet.nodes.starknet.org`, not `starknet.nodes.org`.
+
+    Public endpoint, so a plain env var rather than a Secrets Manager entry. If you
+    move to a provider that embeds an API key in the URL, move this to the
+    `secrets` block in paymaster.tf instead.
   EOT
   type        = string
   default     = ""
