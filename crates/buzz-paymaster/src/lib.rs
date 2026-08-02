@@ -39,6 +39,7 @@ use buzz_core::sponsorship::SponsorRequest;
 use starknet_core::types::{Call, Felt};
 use starknet_core::utils::get_selector_from_name;
 
+pub mod handler;
 pub mod rpc;
 
 /// Errors from sponsorship.
