@@ -139,9 +139,16 @@ of BIP-340 verification, and that does not amortise. See
 
 ## Sponsorship (`buzz-paymaster`)
 
-Off by default and safe to ignore until you want it. `paymaster_desired_count` is 0
-and `paymaster_account_class_hash` is blank in `dev.tfvars`; either one alone keeps
-the service at zero tasks, so the stack applies cleanly with nothing running.
+Off by default and safe to ignore until you want it. `paymaster_enabled = false`
+means **no resources at all**, not "resources with zero tasks".
+
+That distinction is load-bearing, and it is here because the first version got it
+wrong. It created the IAM roles, secret and task definition unconditionally and only
+held `desired_count` at 0 — so the next CI deploy failed with `iam:PassRole` denied on
+`buzz-dev-paymaster-task`, because the bootstrap stack that grants it had not been
+applied. A **relay** deploy was blocked by an optional service that was supposed to be
+off. Adding an optional service must never be able to do that, so every resource in
+`paymaster.tf` is gated on `count`.
 
 Two properties are load-bearing, both explained at the top of `paymaster.tf`:
 
@@ -159,23 +166,31 @@ one publish pipeline and one immutable `:sha-<7>` tag for CD to pin. See the
 
 ### Turning it on
 
-Three things must be true first, in this order:
+In this order. Step 1 before step 4, or you reproduce the failure above.
 
-1. **The bootstrap stack is re-applied.** `oidc.tf` gained the paymaster's two role
-   ARNs under `PassExecutionAndTaskRoles`; without them CI cannot register the task
-   definition and the deploy fails with an `iam:PassRole` `AccessDenied`. The same
-   change extends the `GetSecretValue` Deny to the sponsor's key, which is what stops
-   a workflow that assumes the deploy role from reading a credential that can spend
-   money. **Apply `bootstrap/` before the main stack.**
-2. **A `NostrAccount` is deployed and confirmed** to land at the address
+1. **Apply the bootstrap stack.** Separate state, so CI never applies it:
+
+   ```bash
+   terraform -chdir=infra/aws/bootstrap apply
+   ```
+
+   `oidc.tf` gained the paymaster's two role ARNs under `PassExecutionAndTaskRoles`;
+   without them CI cannot register the task definition. The same change extends the
+   `GetSecretValue` Deny to the sponsor's key, which is what stops a workflow that
+   assumes the deploy role from reading a credential that can spend money.
+2. **Deploy one `NostrAccount` and confirm it lands** at the address
    `buzz wallet address` derives. This verifies the UDC `deploy_from_zero`
    assumption *before* the sponsor starts deploying accounts for other people; get
    it wrong and every account lands where nobody can find it, holding whatever was
    sent to the address the user was shown.
-3. **The secret holds a funded account.** Terraform never manages its version — see
+3. **Put a funded account in the secret.** Terraform never manages its version — see
    the `put-secret-value` command in `paymaster.tf`.
+4. Set `paymaster_enabled = true`, `paymaster_account_class_hash`, and
+   `paymaster_desired_count = 1`.
 
-Then set `paymaster_account_class_hash` and `paymaster_desired_count = 1`.
+A `precondition` fails the plan if `paymaster_enabled` is set without a class hash,
+rather than letting the task start and exit non-zero where only CloudWatch would show
+it.
 
 `BUZZ_PAYMASTER_MAX_FEE_FRI` caps what a single request can cost (default 10 STRK).
 It is a spending guard, not a per-member quota — there deliberately is no quota, and

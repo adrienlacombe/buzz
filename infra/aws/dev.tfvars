@@ -79,19 +79,27 @@ serve_git_web_gui = true
 starknet_rpc_url = "https://mainnet.nodes.starknet.org/rpc/v0_10"
 
 # ── Sponsorship (buzz-paymaster) ─────────────────────────────────────────────
-# Disabled. Turning it on needs three things that do not exist yet:
+# Disabled, and `paymaster_enabled = false` means **no resources at all** — not
+# "resources with zero tasks". That distinction was learned by breaking it: the first
+# version created the IAM roles and task definition unconditionally, and the next CI
+# deploy failed on iam:PassRole for a role the bootstrap stack had not yet been told
+# about. A relay deploy was blocked by an optional service that was meant to be off.
 #
-#   1. A funded Starknet account for the sponsor to spend from.
-#   2. Its address and signing key, plus a Nostr identity, written to the
-#      buzz-dev/paymaster secret out-of-band (the command is in paymaster.tf).
-#   3. One NostrAccount actually deployed and confirmed to land at the address
-#      `buzz wallet address` derives, so the UDC deploy_from_zero assumption is
-#      verified before the sponsor starts deploying accounts for other people.
+# Turning it on, in this order:
 #
-# Until then desired_count stays 0 and the class hash stays blank, either of which
-# alone keeps the service at zero tasks. The class hash below is the SNIP-9 class
-# declared on mainnet 2026-08-02 (contracts/DEPLOYMENTS.md) — uncommented when (3)
-# is done.
+#   1. Apply bootstrap/ — separate state, CI never touches it. Grants iam:PassRole on
+#      the paymaster roles and denies the deploy role any read of the sponsor's key:
+#        terraform -chdir=infra/aws/bootstrap apply
+#   2. Fund a Starknet account for the sponsor to spend from.
+#   3. Write its address and signing key, plus a Nostr identity, to the
+#      buzz-dev/paymaster secret out-of-band (command in paymaster.tf).
+#   4. Deploy one NostrAccount and confirm it lands at the address
+#      `buzz wallet address` derives — this verifies the UDC deploy_from_zero
+#      assumption before the sponsor starts deploying accounts for other people.
+#   5. Set the three values below.
+#
+# Step 1 before step 5, or you reproduce the failure above.
+paymaster_enabled       = false
 paymaster_desired_count = 0
 # paymaster_account_class_hash = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537"
 

@@ -22,6 +22,36 @@
 
 # ── Variables ────────────────────────────────────────────────────────────────
 
+variable "paymaster_enabled" {
+  description = <<-EOT
+    Whether to create the paymaster stack at all. Default false.
+
+    Gates every resource in this file, not just how many tasks run. That
+    distinction is the whole point and it was learned the hard way: the first
+    version of this file created the roles, secret and task definition
+    unconditionally and only held `desired_count` at 0. The very next CI deploy
+    failed — `iam:PassRole` on the new task role, because the bootstrap stack that
+    grants it had not been applied — and a *relay* deploy was blocked by an optional
+    service that was supposed to be off.
+
+    So: adding an optional service must never be able to break the relay's pipeline.
+    Off means no resources.
+
+    Turning it on is a two-step, in this order:
+
+      1. Apply `bootstrap/` — it grants iam:PassRole on the two roles below and
+         extends the GetSecretValue Deny to the sponsor's key. Separate state, so CI
+         never applies it:
+           terraform -chdir=infra/aws/bootstrap apply
+      2. Set paymaster_enabled = true here, plus paymaster_account_class_hash and
+         paymaster_desired_count = 1.
+
+    Doing (2) before (1) reproduces the exact failure above.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "paymaster_desired_count" {
   description = <<-EOT
     Tasks to run. 0 or 1 only.
@@ -85,14 +115,18 @@ variable "paymaster_max_fee_fri" {
 }
 
 locals {
-  # Both a class hash and a non-zero count are required. Either missing means the
-  # service exists at zero tasks rather than crash-looping.
-  paymaster_enabled = var.paymaster_account_class_hash != "" && var.paymaster_desired_count > 0
+  # Whether a task should actually be *running*, as opposed to whether the resources
+  # exist at all (`var.paymaster_enabled`). Both a class hash and a non-zero count are
+  # required, so a half-configured stack sits at zero tasks rather than crash-looping
+  # and drowning real failures in restart noise.
+  paymaster_running = var.paymaster_account_class_hash != "" && var.paymaster_desired_count > 0
 }
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_log_group" "paymaster" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name              = "/ecs/${local.name}/paymaster"
   retention_in_days = var.log_retention_days
 
@@ -102,6 +136,8 @@ resource "aws_cloudwatch_log_group" "paymaster" {
 # ── Network ──────────────────────────────────────────────────────────────────
 
 resource "aws_security_group" "paymaster" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name        = "${local.name}-paymaster"
   description = "Buzz paymaster Fargate task - egress only, listens on nothing"
   vpc_id      = aws_vpc.main.id
@@ -110,13 +146,24 @@ resource "aws_security_group" "paymaster" {
 
   lifecycle {
     create_before_destroy = true
+
+    # Fails at plan time rather than as a crash loop nobody is watching. Enabling
+    # the stack without a class hash would create everything, start a task, and have
+    # it exit non-zero on `BUZZ_PAYMASTER_ACCOUNT_CLASS_HASH is required` — visible
+    # only in CloudWatch.
+    precondition {
+      condition     = !var.paymaster_enabled || var.paymaster_account_class_hash != ""
+      error_message = "paymaster_enabled needs paymaster_account_class_hash set; see contracts/DEPLOYMENTS.md for the declared class."
+    }
   }
 }
 
 # Deliberately the only rule. See property 1 at the top of this file: there is no
 # ingress rule because there is nothing to reach.
 resource "aws_vpc_security_group_egress_rule" "paymaster_all" {
-  security_group_id = aws_security_group.paymaster.id
+  count = var.paymaster_enabled ? 1 : 0
+
+  security_group_id = aws_security_group.paymaster[0].id
   description       = "Image pull, Secrets Manager, the relay, and a Starknet RPC endpoint"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
@@ -147,6 +194,8 @@ resource "aws_vpc_security_group_egress_rule" "paymaster_all" {
 #       "BUZZ_PAYMASTER_STARKNET_KEY": "0x<its signing key - spends money>"
 #     }'
 resource "aws_secretsmanager_secret" "paymaster" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name        = "${local.name}/paymaster"
   description = "Sponsor Nostr identity and Starknet signing key - set out-of-band, never managed by Terraform"
 
@@ -161,6 +210,8 @@ resource "aws_secretsmanager_secret" "paymaster" {
 # policy would have to name the paymaster secret, which would let a compromised
 # relay task's role read a key that spends money.
 resource "aws_iam_role" "paymaster_execution" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name               = "${local.name}-paymaster-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume_role.json
 
@@ -168,20 +219,24 @@ resource "aws_iam_role" "paymaster_execution" {
 }
 
 resource "aws_iam_role_policy_attachment" "paymaster_execution_managed" {
-  role       = aws_iam_role.paymaster_execution.name
+  count = var.paymaster_enabled ? 1 : 0
+
+  role       = aws_iam_role.paymaster_execution[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
 resource "aws_iam_role_policy" "paymaster_execution_secrets" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name = "read-paymaster-secret"
-  role = aws_iam_role.paymaster_execution.id
+  role = aws_iam_role.paymaster_execution[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [aws_secretsmanager_secret.paymaster.arn]
+      Resource = [aws_secretsmanager_secret.paymaster[0].arn]
     }]
   })
 }
@@ -190,6 +245,8 @@ resource "aws_iam_role_policy" "paymaster_execution_secrets" {
 # thing here is the SSM channel that backs `aws ecs execute-command`, for reading
 # state during an incident.
 resource "aws_iam_role" "paymaster_task" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name               = "${local.name}-paymaster-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume_role.json
 
@@ -197,8 +254,10 @@ resource "aws_iam_role" "paymaster_task" {
 }
 
 resource "aws_iam_role_policy" "paymaster_task_exec_channel" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name = "ecs-exec-ssm-channel"
-  role = aws_iam_role.paymaster_task.id
+  role = aws_iam_role.paymaster_task[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -218,13 +277,15 @@ resource "aws_iam_role_policy" "paymaster_task_exec_channel" {
 # ── Task definition ──────────────────────────────────────────────────────────
 
 resource "aws_ecs_task_definition" "paymaster" {
+  count = var.paymaster_enabled ? 1 : 0
+
   family                   = "${local.name}-paymaster"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.paymaster_cpu
   memory                   = var.paymaster_memory
-  execution_role_arn       = aws_iam_role.paymaster_execution.arn
-  task_role_arn            = aws_iam_role.paymaster_task.arn
+  execution_role_arn       = aws_iam_role.paymaster_execution[0].arn
+  task_role_arn            = aws_iam_role.paymaster_task[0].arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -256,15 +317,15 @@ resource "aws_ecs_task_definition" "paymaster" {
     # All three from the paymaster secret. valueFrom with a trailing :key:: pulls
     # one field out of the JSON.
     secrets = [
-      { name = "BUZZ_PAYMASTER_NOSTR_KEY", valueFrom = "${aws_secretsmanager_secret.paymaster.arn}:BUZZ_PAYMASTER_NOSTR_KEY::" },
-      { name = "BUZZ_PAYMASTER_STARKNET_ADDRESS", valueFrom = "${aws_secretsmanager_secret.paymaster.arn}:BUZZ_PAYMASTER_STARKNET_ADDRESS::" },
-      { name = "BUZZ_PAYMASTER_STARKNET_KEY", valueFrom = "${aws_secretsmanager_secret.paymaster.arn}:BUZZ_PAYMASTER_STARKNET_KEY::" },
+      { name = "BUZZ_PAYMASTER_NOSTR_KEY", valueFrom = "${aws_secretsmanager_secret.paymaster[0].arn}:BUZZ_PAYMASTER_NOSTR_KEY::" },
+      { name = "BUZZ_PAYMASTER_STARKNET_ADDRESS", valueFrom = "${aws_secretsmanager_secret.paymaster[0].arn}:BUZZ_PAYMASTER_STARKNET_ADDRESS::" },
+      { name = "BUZZ_PAYMASTER_STARKNET_KEY", valueFrom = "${aws_secretsmanager_secret.paymaster[0].arn}:BUZZ_PAYMASTER_STARKNET_KEY::" },
     ]
 
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.paymaster.name
+        "awslogs-group"         = aws_cloudwatch_log_group.paymaster[0].name
         "awslogs-region"        = var.aws_region
         "awslogs-stream-prefix" = "paymaster"
       }
@@ -277,10 +338,12 @@ resource "aws_ecs_task_definition" "paymaster" {
 # ── Service ──────────────────────────────────────────────────────────────────
 
 resource "aws_ecs_service" "paymaster" {
+  count = var.paymaster_enabled ? 1 : 0
+
   name            = "paymaster"
   cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.paymaster.arn
-  desired_count   = local.paymaster_enabled ? var.paymaster_desired_count : 0
+  task_definition = aws_ecs_task_definition.paymaster[0].arn
+  desired_count   = local.paymaster_running ? var.paymaster_desired_count : 0
   launch_type     = "FARGATE"
 
   # Public subnet with a public IP, as the relay does: needed to pull from ghcr.io
@@ -288,7 +351,7 @@ resource "aws_ecs_service" "paymaster" {
   # can reach *in* — the security group has no ingress rule.
   network_configuration {
     subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.paymaster.id]
+    security_groups  = [aws_security_group.paymaster[0].id]
     assign_public_ip = true
   }
 

@@ -505,13 +505,21 @@ would need a second publish workflow, and `deploy-aws.yml` pins the commit's
 immutable `:sha-<7>` tag — so it would have to wait on both pipelines or fall back to
 a floating tag, losing the property the deploy depends on.
 
-**Off by default**: `paymaster_desired_count = 0` and a blank
-`paymaster_account_class_hash`, either of which alone holds the service at zero
-tasks. Before enabling it, `infra/aws/bootstrap/` must be re-applied — `oidc.tf`
-gained the paymaster's two role ARNs under `PassExecutionAndTaskRoles`, without which
-CI cannot register the task definition, and it extends the `GetSecretValue` Deny to
-the sponsor's key so a workflow assuming the deploy role cannot read a credential
-that spends money. See [`infra/aws/README.md`](infra/aws/README.md#turning-it-on).
+**Off by default means no resources**, via `count` on every resource in
+`paymaster.tf` — not "resources with zero tasks". The first version got that wrong and
+it cost a red deploy: it created the IAM roles and task definition unconditionally,
+and the next CI apply failed with `iam:PassRole` denied on `buzz-dev-paymaster-task`
+because `bootstrap/` is a **separate Terraform stack with its own state** that CI
+never applies. A relay deploy was blocked by an optional service that was supposed to
+be off. The rule that came out of it: **adding an optional service must never be able
+to break the relay's pipeline**, and a flag that only scales tasks does not achieve
+that.
+
+Enabling it is a two-step, in order: apply `infra/aws/bootstrap/` (it grants
+`iam:PassRole` on the paymaster's two roles and extends the `GetSecretValue` Deny to
+the sponsor's key, so a workflow assuming the deploy role cannot read a credential
+that spends money), *then* set `paymaster_enabled = true`. Reversed, it reproduces the
+failure above. See [`infra/aws/README.md`](infra/aws/README.md#turning-it-on).
 
 While wiring this up, `BUZZ_STARKNET_RPC_SN_MAIN` was found still being injected into
 every relay task by `ecs.tf`, with a comment pointing at kind:30178 — NIP-SW's
