@@ -335,6 +335,69 @@ measured on mainnet. See [`contracts/DEPLOYMENTS.md`](contracts/DEPLOYMENTS.md) 
 the numbers, the declared class hash, and why address derivation is confirmed by
 the sequencer without a deployment having happened.
 
+### Sponsorship (`buzz-paymaster`)
+
+Because a fresh account cannot pay its own ~0.78 STRK of BIP-340 verification, it
+cannot act at all until someone else pays first. `buzz-paymaster` is that someone:
+it subscribes to the relay as an ordinary client, watches kind:30900, and submits a
+**single atomic multicall** that deploys the account (via the UDC, from a funded
+sponsor account) and runs the user's SNIP-9 payload in one transaction.
+
+Four properties are load-bearing. Each was chosen against a specific failure, so
+changing one needs the failure re-considered rather than the code re-read:
+
+- **No inbound network surface.** A funded service that connects *out* and
+  subscribes is a much smaller target than one exposing an authenticated API, and it
+  inherits NIP-42 auth plus community membership as the gate on who may ask. This is
+  the reason sponsorship is a Nostr kind and not an HTTP endpoint.
+- **The account address is derived from the *event author*, never from the
+  payload.** The relay has already verified the event signature, so the author is
+  attested. Accepting a caller-supplied address would let one member aim a sponsored
+  deployment at another member's account, or at an arbitrary contract.
+- **`deploy_from_zero` must be `1`** in the UDC calldata (`udc_deploy_calldata`).
+  Address derivation uses `deployer_address = 0`; with the flag false the UDC's own
+  address is mixed into the hash and the account lands where nobody derived it,
+  holding whatever the user was told to send. It is the single most consequential
+  value in the crate and has its own test.
+- **Deploy must come first in the multicall.** Reversed, the execute call targets an
+  address with no contract at it and the whole transaction reverts *after* the
+  sponsor has committed to the fee.
+
+#### Paying twice is the failure mode to design against
+
+A stored request is replayed to every new subscription, so "service what arrives" is
+wrong on its own. Three mechanisms stack, cheapest first:
+
+1. **The validity window**, checked before any chain query. An expired request is
+   refused for free — this is what makes replaying stored requests safe at all, and
+   it is why the sponsor subscribes with **no `since`**: a request published while it
+   was down must still be serviced.
+2. **A dedupe set**, rebuilt at every connect from the sponsor's own published
+   kind:30901 results. This is what protects a restarted process, and it is why
+   `run_once` drains the results subscription to EOSE *before* subscribing to
+   requests — and fails rather than proceeding if EOSE never comes.
+3. **The single-use on-chain nonce.** The backstop, and it costs a reverted
+   transaction's fee. Not the plan.
+
+The result's `d` tag is **`<requester_pubkey>:<nonce>`**, not the nonce alone.
+Results are authored by the sponsor, so their replaceable identity is
+`(sponsor_pubkey, 30901, d)`; a nonce-only key would put two members who both chose
+`0x1` in one slot, silently overwriting one member's result *and* dropping an entry
+from the sponsor's record of what it had already paid for.
+
+**The hazard that remains:** a crash between submitting and publishing loses the only
+record of the payment, since the record *is* the published event. Mechanism 1 bounds
+it — a client asking for a short window is protected by construction, one asking for
+hours is not. Closing it properly needs durable state written before submission.
+
+Run **one** instance. Two would both rebuild the same dedupe set and both service a
+request that arrives before either has published; there is no lock.
+
+Spending authority enters through exactly one boundary, the `Submitter` trait, so
+the funded key is invisible to every other part of the crate. `Config::from_env`
+reads only the sponsor's *Nostr* key (relay identity, spends nothing) and its
+`Debug` impl is hand-written to keep the secret half out of logs.
+
 ### Repo settings (no file changes — preferred mechanism)
 
 | Setting | Value | Why |
@@ -551,6 +614,7 @@ crates/
   buzz-persona        # Agent persona packs
   buzz-workflow       # YAML-as-code workflow engine (evalexpr conditions)
   # Clients + interop
+  buzz-paymaster      # FORK-LOCAL. Sponsors Starknet fees for Nostr-key accounts
   buzz-pair-relay     # Ephemeral sidecar relay for NIP-AB device pairing
   buzz-pairing-cli    # CLI for NIP-AB device pairing interop testing
   git-sign-nostr      # Sign git objects with a Nostr key

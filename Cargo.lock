@@ -1143,6 +1143,7 @@ name = "buzz-paymaster"
 version = "0.1.0"
 dependencies = [
  "buzz-core",
+ "buzz-ws-client",
  "nostr",
  "reqwest 0.13.4",
  "serde",
