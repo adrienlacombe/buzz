@@ -232,6 +232,10 @@ mod tests {
     /// BIP-340 test vector 0's public key — a published, deliberately non-secret
     /// value, so no key was generated for these tests.
     const PUBKEY: &str = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+    /// The SNIP-9 class declared on mainnet 2026-08-02, declare tx
+    /// `0x05328994e14ed537c34f3a19a79e4bad71d3be560fe47da4067dd7014c4399fc`. Used
+    /// here only to make the test addresses realistic; production reads it from
+    /// configuration, since a class hash changes with any contract edit.
     const CLASS_HASH: &str = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537";
 
     struct FakeChain {

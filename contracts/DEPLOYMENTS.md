@@ -5,49 +5,61 @@
 A Starknet account whose owner is a Nostr x-only pubkey, validating BIP-340
 Schnorr signatures. See [`src/account.cairo`](src/account.cairo).
 
-> ## ⚠️ The declared class below is superseded and must be re-declared
->
-> Adding SNIP-9 sponsored execution changed the contract, so the class hash moved:
->
-> | | |
-> |---|---|
-> | Declared on mainnet | `0x038a57ffba543e9fd54998a60436effc14e878cdcc64d4676ff642396fda346e` |
-> | Current source builds to | `0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537` |
->
-> **Do not derive addresses from the declared hash any more** — it belongs to a
-> class with no `execute_from_outside_v2`, so accounts at those addresses could
-> never be sponsored, and a fresh account cannot pay its own ~0.78 STRK of
-> BIP-340 verification.
->
-> Nothing was ever deployed, so this costs nothing beyond a re-declare. That is
-> precisely why the change was made before the first deployment rather than after:
-> the address is a hash of the class, so every address changes with it, and doing
-> this later would have orphaned every existing account and any funds sent to one.
->
-> Re-declare with `sncast`, then replace the hashes and the tx below and delete
-> this notice. The measurements further down still hold — SNIP-9 adds entry points
-> but does not touch the BIP-340 path that dominates the cost.
-
-### Mainnet (`SN_MAIN`) — superseded, see the notice above
+### Mainnet (`SN_MAIN`)
 
 | | |
 |---|---|
-| Class hash | `0x038a57ffba543e9fd54998a60436effc14e878cdcc64d4676ff642396fda346e` |
-| Declare tx | `0x04a5e5356cd64abd1fba1ce4a70e28e34ca993b3b25bb71d7b266be99c987d5a` |
+| Class hash | `0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537` |
+| Declare tx | `0x05328994e14ed537c34f3a19a79e4bad71d3be560fe47da4067dd7014c4399fc` |
 | Status | `SUCCEEDED` / `ACCEPTED_ON_L2` |
-| Declared with | `sncast --account snip36-e2e-bd1d4eaf` |
+| Declared with | `sncast --account snip36-e2e-bd1d4eaf` (0.60.0) |
 | Cairo / Scarb | 2.18.0 |
+| Declared | 2026-08-02 |
 
-Verified after declaring: `starknet_getClass` returns the class with 7 external
-entry points and 1 constructor, and the on-chain class hash equals the one
-`buzz wallet class-hash` computes from `target/dev/`. Local and sequencer agree.
+Verified after declaring, not assumed: `starknet_getClass` returns the class with
+**10 external entry points and 1 constructor**, matching the local build exactly —
+7 from the original account plus `execute_from_outside_v2`,
+`is_valid_outside_execution_nonce` and `supports_interface` from SNIP-9. The
+sequencer's class hash equals the one `buzz wallet class-hash` computes from
+`target/dev/`.
 
-Voyager: <https://voyager.online/class/0x038a57ffba543e9fd54998a60436effc14e878cdcc64d4676ff642396fda346e>
+Voyager: <https://voyager.online/class/0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537>
+
+#### The superseded class
+
+`0x038a57ffba543e9fd54998a60436effc14e878cdcc64d4676ff642396fda346e` (declare tx
+`0x04a5e5356cd64abd1fba1ce4a70e28e34ca993b3b25bb71d7b266be99c987d5a`) is the
+pre-SNIP-9 class and is **still declared on mainnet** — a declare cannot be undone.
+
+**Do not derive addresses from it.** It has no `execute_from_outside_v2`, so an
+account at one of those addresses could never be sponsored, and since a fresh
+account cannot pay its own ~0.78 STRK of BIP-340 verification it would be unable to
+act at all.
+
+Nothing was ever deployed against it, which is the only reason replacing it was
+cheap. The address is a hash of the class, so every address moves with it; doing
+this after the first deployment would have orphaned that account and anything sent
+to it. That is why SNIP-9 landed before any deployment rather than after.
 
 ### Cost, measured on mainnet
 
-Declaration fee was **17.55 STRK** (498,656,640 L2 gas) at an L2 gas price of
-35,202,168,653 Fri.
+Declaration fee was **22.7775 STRK actual** against a 22.8248 STRK estimate
+(635,740,800 L2 gas at 35,902,687,417 Fri, plus 192 L1 data gas). `sncast` pads
+estimates into max bounds around 51.4 STRK, so the account must *hold* far more
+than the fee even though the surplus is returned.
+
+#### What SNIP-9 added
+
+|  | pre-SNIP-9 | with SNIP-9 | change |
+|---|---|---|---|
+| L2 gas | 498,656,640 | 635,740,800 | **+27.5%** |
+| L2 gas price (Fri) | 35,202,168,653 | 35,902,687,417 | +2.0% |
+| Declare fee (STRK) | 17.55 | 22.78 | +29.8% |
+
+The gas price barely moved, so the increase is almost entirely **class size** — the
+SRC5 and SRC9 components plus the nonce map. It is a one-time declare cost and does
+**not** change the per-transaction cost, which is dominated by the ~22.1M gas of
+BIP-340 verification and is untouched by sponsorship support.
 
 That price also prices signature validation, which is the number that decides
 whether this design is usable:
@@ -116,7 +128,7 @@ by a publicly-known key.
 ```bash
 buzz wallet class-hash          # recompute after any contract change
 buzz wallet address --pubkey <64-hex> \
-  --class-hash 0x038a57ffba543e9fd54998a60436effc14e878cdcc64d4676ff642396fda346e
+  --class-hash 0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537
 ```
 
 The address is a hash of the deployment parameters, so it exists before the
@@ -129,11 +141,21 @@ inputs agree with the chain.
 
 ### Notes from the declare
 
-- `tongo-deployer` holds ~9.95 STRK, short of even the unpadded 17.55 STRK
-  estimate. `sncast` pads estimates into max bounds around 41 STRK, so keep well
-  above the estimate.
+- **`sncast` pads estimates into max bounds far above the fee, and validation
+  rejects on the bound, not the fee.** The 2026-08-02 declare cost 22.78 STRK but
+  was rejected at a 32.30 STRK balance because the bound was 51.38 STRK — 2.3x the
+  actual cost. Fund for the bound; the surplus is returned. `--dry-run --detailed`
+  prints the real gas figures without sending anything, and `--l2-gas` /
+  `--l2-gas-price` can tighten the bound if topping up is not an option.
+- `tongo-deployer` holds ~9.95 STRK and cannot declare this contract.
+  `snip36-e2e-bd1d4eaf` is the account both declares used.
 - The RPC at `mainnet.nodes.starknet.org/rpc/v0_10` reports version
-  `0.10.3-rc.0` where `sncast` 0.60 expects `0.10.0`. It warns and proceeds; the
-  declare was unaffected.
+  `0.10.3-rc.0` where `sncast` 0.60 expects `0.10.0`. It warns and proceeds; both
+  declares were unaffected. Note the hostname: `nodes.starknet.org`, not
+  `starknet.nodes.org`.
+- **After a declare, `starknet_getClass` and `getTransactionReceipt` briefly 404
+  while `getTransactionStatus` already reports `ACCEPTED_ON_L2`/`SUCCEEDED`.** That
+  is index lag on the node, not a failed declare — check status first and do not
+  re-send.
 - `starkli` is unmaintained and unused here. Tooling is `sncast` plus the
   `starknet-core` / `starknet-crypto` / `starknet-accounts` crates.
