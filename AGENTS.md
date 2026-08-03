@@ -533,6 +533,7 @@ paymaster.
 |---------|-------|-----|
 | `GHCR_IMAGE` | `ghcr.io/adrienlacombe/buzz` | Retarget relay images to this namespace |
 | `GHCR_PUSH_GATEWAY_IMAGE` | `ghcr.io/adrienlacombe/buzz-push-gateway` | Same for the push gateway |
+| `GHCR_SPRIG_IMAGE` | `ghcr.io/adrienlacombe/buzz-sprig` | Same for the sprig box that the Kubernetes backend deploys. Needed the moment `sprig-image.yml` arrived (upstream #4392, 2026-08-03 sync): it defaults to `ghcr.io/block/buzz-sprig` and **fails on pull requests too**, not just pushes, because `cache-to` is enabled for same-repo PRs (`sprig-image.yml:127`) and writes to `<image>-buildcache`. The failure is `denied: permission_denied: The requested installation does not exist` from buildx, which reads as a registry-auth bug rather than a wrong-namespace one. Upstream provides the override deliberately, so this is a variable and not a patch |
 | `RELEASE_REPO` | `adrienlacombe/buzz` | Opts this fork into the guarded release/canary jobs |
 | Issues | **enabled** | Off by default on forks; the sync workflow's conflict-escalation output needs them |
 | `Auto-tag on Release PR Merge` | **disabled** | Fires on every merged same-repo PR. A sync PR carrying a `deploy/charts/buzz/Chart.yaml` version bump hits its default lane and tries to mint a token from the `BUZZ_RELEASE_TAGGER` GitHub App, which does not exist here |
