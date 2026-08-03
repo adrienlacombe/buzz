@@ -145,9 +145,13 @@ jobs:
           }
           JSON
 
+      # buzz-backend-kubernetes is in tauri.conf.json's externalBin and
+      # bundle-sidecars.sh exits 1 without it on any non-Windows target, so this
+      # list has to track upstream's non-Windows lanes even though the whole
+      # workflow is fork-local.
       - name: Build sidecars
         run: |
-          cargo build --release -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
+          cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
           ./scripts/bundle-sidecars.sh
 
       # Resolved from desktop/src-tauri/Cargo.lock, NOT the root one. Desktop is
