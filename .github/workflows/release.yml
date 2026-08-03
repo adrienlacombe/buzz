@@ -513,9 +513,14 @@ jobs:
           # unsigned, and from release-linux / release-windows where it is moot.
           BUZZ_MACOS_ADHOC_SIGN: "1"
 
+      # FORK-LOCAL PATCH (adrienlacombe/buzz): buzz-backend-kubernetes is built
+      # here for the same reason upstream builds it in every non-Windows lane —
+      # tauri.conf.json lists it in externalBin and bundle-sidecars.sh exits 1
+      # when it is missing. This job is fork-added, so upstream's sweep that
+      # updated its own lanes could not reach it.
       - name: Build sidecars
         run: |
-          cargo build --release -p buzz-acp -p buzz-agent -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
+          cargo build --release -p buzz-acp -p buzz-agent -p buzz-backend-kubernetes -p buzz-dev-mcp -p git-credential-nostr -p buzz-cli
           ./scripts/bundle-sidecars.sh
 
       # Read from desktop/src-tauri/Cargo.lock, NOT the root one. Desktop is
