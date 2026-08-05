@@ -100,7 +100,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz";
+    const TEST_DB_URL: &str = "postgres://buzz:buzz_dev@localhost:5432/buzz"; // sadscan:disable np.postgres.1
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum ConstraintKind {
@@ -561,20 +561,23 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 26 migrations; this
-        // fork adds 0027 and 0028, so the count is 28 here. 0027 landed without
-        // bumping this, which left the assertion failing on main.
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 27 migrations; this
+        // fork adds two of its own, so the count is 29 here.
         //
-        // Both belong to the NIP-SW wallet binding, which this fork has since
-        // removed in favour of the Nostr key controlling the Starknet account
-        // directly. They are kept regardless: they have already run on live
+        // The fork's 0027 and 0028 belong to the NIP-SW wallet binding, which this
+        // fork has since removed in favour of the Nostr key controlling the Starknet
+        // account directly. They are kept regardless: they have already run on live
         // databases and sqlx checksums applied migrations, so deleting them breaks
         // startup validation. What they leave behind — a `search_tsv` expression
         // excluding a kind nobody publishes any more — is inert, and unwinding it
         // would rewrite a generated column across the whole events table for no
         // functional gain. Do not renumber or delete; add a follow-on if it ever
         // needs to change.
-        assert_eq!(migrations.len(), 28);
+        //
+        // Because the fork holds 0027 and 0028, upstream's own new migrations arrive
+        // renumbered above them: upstream's `0027_channels_id_lookup_index.sql` is
+        // `0029_channels_id_lookup_index.sql` here. See the assertion for it below.
+        assert_eq!(migrations.len(), 29);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -932,6 +935,29 @@ mod tests {
         assert!(heartbeat.contains("epoch"));
         assert!(heartbeat.contains("INSERT INTO replica_heartbeat (id) VALUES (1)"));
         assert!(heartbeat.contains("_operator_global_tables"));
+
+        // Channel-id lookup index (upstream's 0027, FORK-LOCAL PATCH
+        // (adrienlacombe/buzz): renumbered to 0029 here because this fork already
+        // holds 0027 and 0028): serves the tenant-independent `channels` lookups
+        // that carry no community_id predicate, which no community_id-leading
+        // index can satisfy. Covering + partial so the planner can go index-only;
+        // asserted NOT UNIQUE because `id` alone is not unique in this table (the
+        // same channel id may exist under more than one community), so a unique
+        // index would encode a false constraint and fail to build on such a
+        // database.
+        assert_eq!(migrations[28].version, 29);
+        let channel_id_index = migrations[28].sql.as_str();
+        assert!(channel_id_index.contains("idx_channels_id_live"));
+        assert!(channel_id_index.contains("INCLUDE (community_id)"));
+        assert!(channel_id_index.contains("WHERE deleted_at IS NULL"));
+        assert!(
+            !channel_id_index.contains("CREATE UNIQUE INDEX"),
+            "channels.id is not unique across communities — index must not be UNIQUE",
+        );
+        assert!(
+            desired_schema.contains("idx_channels_id_live"),
+            "desired-state schema must carry the channel-id lookup index",
+        );
     }
 
     #[test]
@@ -1174,7 +1200,7 @@ mod tests {
         run_migrations(&pool)
             .await
             .expect("retry succeeds after operator repair");
-        assert_eq!(applied_versions(&pool).await.last().copied(), Some(26));
+        assert_eq!(applied_versions(&pool).await.last().copied(), Some(29));
     }
 
     #[tokio::test]

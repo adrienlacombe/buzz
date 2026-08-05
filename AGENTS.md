@@ -172,7 +172,8 @@ place.
 | `.github/workflows/upstream-sync-merge.yml` | new | The deterministic (01:30) sync stage — the one that preserves the merge parent. Plain git, no AI. Optional `SYNC_PUSH_TOKEN` secret: a branch pushed with `GITHUB_TOKEN` does not start new workflow runs, so set a PAT if CI stops firing on sync PRs |
 | `.github/workflows/upstream-sync-ci-status.yml` | new | Labels an open sync PR `sync-ci-green`/`sync-ci-red` once checks settle, and re-requests the Copilot review that gh-aw's `reviewers:` fails to attach. Deliberately does not merge |
 | `migrations/0027_wallet_binding_fts.sql`, `0028_wallet_binding_fts_kind_move.sql` | new, and **kept after the feature was removed** | Search exclusions for the withdrawn NIP-SW wallet binding. They have already run on live databases and sqlx checksums applied migrations, so deleting them breaks startup validation. What they leave behind — a `search_tsv` expression excluding a kind nobody publishes — is inert, and unwinding it would rewrite a generated column across the whole events table for nothing. **Never edit or delete an applied migration**; add a follow-on |
-| `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 28, not upstream's 26 | Counts embedded migrations, so it moves whenever the fork adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. A one-integer conflict on every upstream migration — take upstream's count and add the fork's two |
+| `migrations/0029_channels_id_lookup_index.sql` | upstream's `0027_channels_id_lookup_index.sql`, **renumbered** | The fork holds 0027 and 0028, so upstream's own new migrations have to arrive above them. See [Upstream migrations arrive renumbered](#upstream-migrations-arrive-renumbered) — this is now a permanent pattern, not a one-off |
+| `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 29, not upstream's 27; upstream's channel-index assertion reads `migrations[28].version == 29`, and the highest applied version is `Some(29)` | Counts embedded migrations, so it moves whenever *either* side adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. Beyond the count, every upstream assertion that indexes `migrations[…]` past 25 or names a version above 26 has to be shifted by the fork's two — see the section below for why the test suite will *not* catch it if you forget |
 | `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name. Sets `signingIdentity: "-"` in its inline config and runs **without** `--no-sign`, which would silently discard it; asserts the bundle signature of the `.app` inside the mounted DMG. Its **sidecar list must track upstream's non-Windows lanes**: `tauri.conf.json`'s `externalBin` is shared, and `scripts/bundle-sidecars.sh` exits 1 on a missing binary, so a sidecar upstream adds breaks this workflow without ever conflicting — `buzz-backend-kubernetes` (#4289) did exactly that in the 2026-08-03 sync |
 | `Dockerfile` | `buzz-paymaster` added to the cargo build, the strip step, and both `COPY` stages | The sponsor ships in the relay's image so there is one publish pipeline and one immutable `:sha-<7>` tag for `deploy-aws.yml` to pin. Four one-line additions, each inside an existing parallel list, so a conflict resolves as *keep ours, take upstream's*. It is **not** the `ENTRYPOINT` — `infra/aws/paymaster.tf` overrides `entryPoint` |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
@@ -196,7 +197,7 @@ place.
 | `desktop/src-tauri/tauri.conf.json` | `productName` `Buzz` → `BitcoinMarkets`; `identifier` → `app.bitcoinmarkets.desktop`; deep-link scheme → `bitcoinmarkets` | Names the `.app` bundle and the DMG filename. **The one divergence carrying no in-file marker** — JSON takes no comments — so a sync reviewer has only this row to go on. The identifier and scheme changes are what stop this fork sharing state with an upstream Buzz install; see [Splitting state from upstream Buzz](#splitting-state-from-upstream-buzz) |
 | `desktop/src-tauri/src/app_state_keyring.rs` | `RELEASE_KEYRING_SERVICE` = `bitcoinmarkets-desktop`, and it joins the canonical list in `migration_marker_name` | The keychain service name is a constant that does **not** key off the bundle identifier (`secret_store.rs:50` says so explicitly), so renaming the identifier alone would split the app-data directory while leaving both apps on one keychain entry — identity and store then disagree, which is worse than sharing both |
 | `desktop/src-tauri/src/deep_link.rs` | `DEEP_LINK_SCHEME` const; handler accepts `bitcoinmarkets` **and** `buzz` | Only `bitcoinmarkets` is OS-registered, which is the collision fix; `buzz://` stays accepted inbound because such links already exist in message history. Emission is exclusive, acceptance is not |
-| `desktop/src-tauri/src/lib.rs` | `mod relay_allowlist;` (see below); single-instance argv accepts both schemes | Matches the `deep_link.rs` guard — a duplicate launch forwards either scheme |
+| `desktop/src-tauri/src/lib.rs` | one line: the single-instance argv filter calls `deep_link::is_supported_deep_link` instead of `arg.starts_with("buzz://")` | Matches the `deep_link.rs` guard — a duplicate launch forwards either scheme. This is the file's **only** fork patch; the `mod relay_allowlist;` declaration this row used to claim lives in `relay.rs`, for the file-size reason in that row |
 | `desktop/src/features/messages/lib/messageLink.ts` + `remarkMessageLinks.ts` + `shared/api/inviteHelpers.ts` | emit `bitcoinmarkets:`, accept both | `messageLink.ts` builds "Copy link" URLs, so it must emit the registered scheme or copied links open the wrong app. The other two are acceptors: `remarkMessageLinks` detects bare URLs in message text (a miss renders a valid link as inert text) and `inviteHelpers` parses invite links. Upstream's `(?:buzz\|buzz)` alternation was degenerate — leftover from its own rename |
 | `web/src/shared/lib/deep-link.ts` | new | Single source of truth for the scheme in the web client, which is what hands these URLs to the OS. Additive so it cannot conflict; the three call sites (`InvitePage.tsx` ×2, `ConnectButton.tsx`) import it rather than inlining fork-local strings into upstream components. `InvitePage` also says "Accept invite in BitcoinMarkets" |
 | `desktop/src-tauri/Info.plist` | `CFBundleDisplayName`, `CFBundleName` and the three `NS*UsageDescription` strings → `BitcoinMarkets` | `productName` only renames the `.app` directory, the DMG and the mounted volume. These keys are what macOS displays: Finder reads `CFBundleDisplayName`, the menu bar reads `CFBundleName`, and the usage descriptions are quoted verbatim in system permission prompts. Verified against a built canary before patching — the bundle was `BitcoinMarkets.app` while `CFBundleName` was still `Buzz`, so the app asked for the microphone as "Buzz". `CFBundleIdentifier` and the `buzz-desktop` executable name stay |
@@ -227,6 +228,97 @@ conflict surface for code that never executes. They would break if ever enabled.
 `infra/aws/` is additive-only by construction — it edits no upstream file. If an
 upstream sync ever conflicts there, something has gone wrong; do not resolve it by
 reformatting the Terraform.
+
+### Upstream migrations arrive renumbered
+
+The fork occupies migration versions **0027 and 0028**, and both have already run
+on the live database. So every migration upstream adds from now on collides on the
+version integer, and **the fork's cannot be the one that moves** — sqlx checksums
+applied migrations, so renumbering an applied file fails relay startup. Upstream's
+new file is the one that has never run here, so it is the one that moves: rename it
+to the next free version above the fork's block and keep its contents byte-identical.
+
+This is the inverse of the event-kind rule, and for a concrete reason. A kind is a
+wire integer that pinned clients match on, so the side with *deployed traffic* keeps
+it — upstream. A migration version is a row in `_sqlx_migrations` on **this fork's own
+database**, so the side with *applied history* keeps it — the fork. Same shape of
+collision, opposite resolution, because "already deployed" points at different
+parties in the two cases.
+
+`0027_channels_id_lookup_index.sql` (upstream #4647) was the first of these, in the
+2026-08-05 sync, and it is worth knowing exactly how it fails because **nothing in
+the test suite objects**:
+
+- `sqlx::migrate!` accepts duplicate versions at compile time. `MIGRATOR.iter()`
+  simply yields two entries with version 27.
+- With both files present, `migrations.len()` is 29 either way — 28 fork migrations
+  plus one — so the count assertion cannot distinguish the broken tree from the
+  fixed one. `sort_by_key` is stable and sorts by version only, so the two version-27
+  files order by filename: `0027_channels…` lands at index 26, ahead of
+  `0027_wallet_binding_fts`. Upstream's new assertions index `migrations[26]` and
+  therefore **pass on the broken tree**. `cargo test -p buzz-db` was green with the
+  collision in place.
+- The failure is at *runtime*, in `Migrator::run`. On the live database
+  `_sqlx_migrations` already holds version 27 with `0027_wallet_binding_fts`'s
+  checksum; the loop reaches upstream's version-27 file, finds that applied row, the
+  checksums differ, and it returns `MigrateError::VersionMismatch(27)`
+  (`sqlx-core-0.9.0/src/migrate/migrator.rs:275`). On a *fresh* database both
+  version-27 files look unapplied and both are inserted, so the second collides on
+  the `_sqlx_migrations` version primary key.
+
+**No pre-merge gate catches it, and CI is structurally unable to.** The integration
+lanes build their database with `pgschema apply --file schema/schema.sql` and then
+start the relay *without* `BUZZ_AUTO_MIGRATE` — `ci.yml:473` says so outright ("then
+drop AUTO_MIGRATE below"), because the community row has to be seeded before boot. So
+the sqlx migrator never runs in CI. `ci.yml:711` then states that "the schema-drift /
+migration-version guarantee is owned by the buzz-db migration.rs unit tests, not this
+suite" — and those are exactly the tests shown above to pass with the collision in
+place. The one test that would catch it,
+`run_migrations_applies_consolidated_initial_schema_on_fresh_database`, is
+`#[ignore = "requires Postgres"]` and is not among the ignored tests CI opts into.
+
+Production is where it lands: `infra/aws/ecs.tf:172` sets `BUZZ_AUTO_MIGRATE=true`, so
+the relay migrates at boot, and merging fires `deploy-aws.yml`. The consequence of
+missing this is the live relay failing to start — which is why a new file under
+`migrations/` is a merge tripwire rather than a routine diff.
+
+**The renumber is not finished when the file is renamed.** Upstream's own assertions
+about its new migration are written against upstream's index and version, and they
+merge cleanly into a tree where both are wrong. For 0027→0029 that was
+`migrations[26].version == 27` → `migrations[28].version == 29`, plus
+`applied_versions(…).last() == Some(27)` → `Some(29)`. Grep the test module for the
+old integer rather than trusting the diff — these lines arrive as context, not as
+conflicts. And whenever the renumbered migration carries a `kind = …` literal or any
+other value the fork also touches, re-read the [event-kind](#fork-local-event-kinds)
+notes before assuming the two are independent.
+
+### Upstream `buzz://` links that are deliberately *not* rebranded
+
+The [scheme rename](#splitting-state-from-upstream-buzz) covers links handed to the
+**OS**. It deliberately does not cover `buzz://` strings that never leave the app,
+and upstream's entity links (#4695, 2026-08-05 sync) are the first sizeable family of
+those: `buzz://repo`, `buzz://pr` and `buzz://issue`, built and parsed in
+`desktop/src/shared/lib/entityLink.ts` and built in `crates/buzz-cli/src/links.rs`.
+
+They are unpatched on purpose, on two checks worth re-running rather than re-reading:
+
+1. **They never reach the OS.** `deep_link.rs`'s router has arms for `connect`,
+   `add-community`, `message`, `join` and `nostr-bind` — no `repo`/`pr`/`issue`. And
+   `shared/ui/markdown/entityLinks.tsx` renders them with an `onClick` that calls
+   `event.preventDefault()` and routes in-app. So the scheme here is an internal
+   sentinel, not a registration.
+2. **They are a wire token between clients.** `buzz-cli`'s own comment says the link
+   "renders as a rich preview card in Buzz Desktop when included in a chat message" —
+   it travels inside message content and is consumed by `parseEntityLink`. Emitting
+   `bitcoinmarkets://` here would stop this fork rendering cards for links published
+   by any upstream client, and vice versa: a wire-format divergence bought for no
+   behavioural gain, across six files upstream is actively developing.
+
+**What flips this:** a `repo`/`pr`/`issue` arm appearing in `deep_link.rs`'s router,
+or any "Copy link" affordance that puts an entity link on the clipboard. Either makes
+these OS links, and then the fork must emit the registered scheme exactly as
+`messageLink.ts` does. Check for both when a sync touches `entityLink.ts`,
+`entityLinks.tsx` or `deep_link.rs`.
 
 ### Splitting state from upstream Buzz
 
@@ -1218,6 +1310,7 @@ reconnects preserve pending avatar verification work):
 - `resetRenderScopedReactionHydration()` — reaction hydration cache
 - `clearSearchHitEventCache()` — search result event cache
 - `clearMarkdownNodeCache()` — markdown parse-node cache
+- `resetLinkPreviewTitleCache()` — link preview title cache (Buzz entity titles come from relay events)
 
 **If you add a new module-level cache, Map, or class instance that holds
 community-scoped data, you must add its reset to `resetCommunityState()`.**
