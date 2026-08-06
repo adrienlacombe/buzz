@@ -172,8 +172,8 @@ place.
 | `.github/workflows/upstream-sync-merge.yml` | new | The deterministic (01:30) sync stage — the one that preserves the merge parent. Plain git, no AI. Optional `SYNC_PUSH_TOKEN` secret: a branch pushed with `GITHUB_TOKEN` does not start new workflow runs, so set a PAT if CI stops firing on sync PRs |
 | `.github/workflows/upstream-sync-ci-status.yml` | new | Labels an open sync PR `sync-ci-green`/`sync-ci-red` once checks settle, and re-requests the Copilot review that gh-aw's `reviewers:` fails to attach. Deliberately does not merge |
 | `migrations/0027_wallet_binding_fts.sql`, `0028_wallet_binding_fts_kind_move.sql` | new, and **kept after the feature was removed** | Search exclusions for the withdrawn NIP-SW wallet binding. They have already run on live databases and sqlx checksums applied migrations, so deleting them breaks startup validation. What they leave behind — a `search_tsv` expression excluding a kind nobody publishes — is inert, and unwinding it would rewrite a generated column across the whole events table for nothing. **Never edit or delete an applied migration**; add a follow-on |
-| `migrations/0029_channels_id_lookup_index.sql` | upstream's `0027_channels_id_lookup_index.sql`, **renumbered** | The fork holds 0027 and 0028, so upstream's own new migrations have to arrive above them. See [Upstream migrations arrive renumbered](#upstream-migrations-arrive-renumbered) — this is now a permanent pattern, not a one-off |
-| `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 29, not upstream's 27; upstream's channel-index assertion reads `migrations[28].version == 29`, and the highest applied version is `Some(29)` | Counts embedded migrations, so it moves whenever *either* side adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. Beyond the count, every upstream assertion that indexes `migrations[…]` past 25 or names a version above 26 has to be shifted by the fork's two — see the section below for why the test suite will *not* catch it if you forget |
+| `migrations/0029_channels_id_lookup_index.sql`, `0030_long_reaction_payloads.sql` | upstream's `0027_channels_id_lookup_index.sql` and `0028_long_reaction_payloads.sql`, **renumbered**; contents byte-identical | The fork holds 0027 and 0028, so upstream's own new migrations have to arrive above them. Two syncs running, so treat this as the standing cost of the fork's migration block rather than a special case. See [Upstream migrations arrive renumbered](#upstream-migrations-arrive-renumbered) |
+| `crates/buzz-db/src/migration.rs` | `migrations.len()` assertion is 30, not upstream's 28; upstream's channel-index assertion reads `migrations[28].version == 29`, its long-reaction assertion reads `migrations[29].version == 30`, and the highest applied version is `Some(30)` | Counts embedded migrations, so it moves whenever *either* side adds one. `0027` landed without bumping it and left the test failing on `main`; fixed in PR #9. Beyond the count, every upstream assertion that indexes `migrations[…]` past 25 or names a version above 26 has to be shifted by the fork's two — see the section below for why the test suite will *not* catch it if you forget |
 | `.github/workflows/macos-canary.yml` | new; `push` trigger on `main` with desktop path filters | Unsigned macOS canary; upstream only has a *signed* one, which a fork cannot run. Builds automatically when `desktop/**`, `crates/**` or the root `Cargo.*` change, so the newest artifact always matches `main` — it was dispatch-only, and the sole artifact went 13 commits stale. Free: the repo is public, so GitHub-hosted macOS runners are unbilled. Stages the artifact and the usage notes under the product name read from `tauri.conf.json`, not a hardcoded one, so the brand rename below cannot publish a build under the old name. Sets `signingIdentity: "-"` in its inline config and runs **without** `--no-sign`, which would silently discard it; asserts the bundle signature of the `.app` inside the mounted DMG. Its **sidecar list must track upstream's non-Windows lanes**: `tauri.conf.json`'s `externalBin` is shared, and `scripts/bundle-sidecars.sh` exits 1 on a missing binary, so a sidecar upstream adds breaks this workflow without ever conflicting — `buzz-backend-kubernetes` (#4289) did exactly that in the 2026-08-03 sync |
 | `Dockerfile` | `buzz-paymaster` added to the cargo build, the strip step, and both `COPY` stages | The sponsor ships in the relay's image so there is one publish pipeline and one immutable `:sha-<7>` tag for `deploy-aws.yml` to pin. Four one-line additions, each inside an existing parallel list, so a conflict resolves as *keep ours, take upstream's*. It is **not** the `ENTRYPOINT` — `infra/aws/paymaster.tf` overrides `entryPoint` |
 | `.github/aw/actions-lock.json` | new | gh-aw action SHA pins |
@@ -245,9 +245,16 @@ database**, so the side with *applied history* keeps it — the fork. Same shape
 collision, opposite resolution, because "already deployed" points at different
 parties in the two cases.
 
-`0027_channels_id_lookup_index.sql` (upstream #4647) was the first of these, in the
-2026-08-05 sync, and it is worth knowing exactly how it fails because **nothing in
-the test suite objects**:
+It has now happened twice running — `0027_channels_id_lookup_index.sql` (upstream
+#4647) in the 2026-08-05 sync, then `0028_long_reaction_payloads.sql` (upstream #3833)
+in the 2026-08-06 sync, renumbered to `0029` and `0030`. Expect it on any sync that
+touches `migrations/`, and note that the *second* collision is the more dangerous
+shape: upstream's 0028 landed on the fork's 0028, so the two files sorted adjacent and
+the tree looked plausible. **A new file under `migrations/` is the tripwire — check the
+version integer before reading anything else in the diff.**
+
+The first one is worth keeping in full because it shows exactly how the failure hides
+— **nothing in the test suite objects**:
 
 - `sqlx::migrate!` accepts duplicate versions at compile time. `MIGRATOR.iter()`
   simply yields two entries with version 27.
@@ -284,13 +291,26 @@ missing this is the live relay failing to start — which is why a new file unde
 
 **The renumber is not finished when the file is renamed.** Upstream's own assertions
 about its new migration are written against upstream's index and version, and they
-merge cleanly into a tree where both are wrong. For 0027→0029 that was
-`migrations[26].version == 27` → `migrations[28].version == 29`, plus
-`applied_versions(…).last() == Some(27)` → `Some(29)`. Grep the test module for the
-old integer rather than trusting the diff — these lines arrive as context, not as
-conflicts. And whenever the renumbered migration carries a `kind = …` literal or any
-other value the fork also touches, re-read the [event-kind](#fork-local-event-kinds)
-notes before assuming the two are independent.
+merge cleanly into a tree where both are wrong:
+
+| Sync | Renumber | Assertions that had to move with it |
+|------|----------|--------------------------------------|
+| 2026-08-05 | 0027 → 0029 | `migrations[26].version == 27` → `migrations[28].version == 29`; `applied_versions(…).last() == Some(27)` → `Some(29)` |
+| 2026-08-06 | 0028 → 0030 | `migrations[27].version == 28` → `migrations[29].version == 30`; `migrations.len()` 28 → 30; `applied_versions(…).last()` → `Some(30)` |
+
+Only `migrations.len()` arrives as a *conflict*; every indexed assertion arrives as
+clean context, which is why the diff will not point you at them. Grep the test module
+for the old integer instead. A cheap independent check that the rename actually took:
+
+```bash
+ls migrations/*.sql | sed 's|.*/||' | cut -d_ -f1 | sort | uniq -d
+```
+
+Any output is a duplicate version, and the unit tests will still be green.
+
+And whenever the renumbered migration carries a `kind = …` literal or any other value
+the fork also touches, re-read the [event-kind](#fork-local-event-kinds) notes before
+assuming the two are independent.
 
 ### Upstream `buzz://` links that are deliberately *not* rebranded
 
