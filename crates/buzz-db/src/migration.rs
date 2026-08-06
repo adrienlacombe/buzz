@@ -561,8 +561,8 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 27 migrations; this
-        // fork adds two of its own, so the count is 29 here.
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 28 migrations; this
+        // fork adds two of its own, so the count is 30 here.
         //
         // The fork's 0027 and 0028 belong to the NIP-SW wallet binding, which this
         // fork has since removed in favour of the Nostr key controlling the Starknet
@@ -576,8 +576,10 @@ mod tests {
         //
         // Because the fork holds 0027 and 0028, upstream's own new migrations arrive
         // renumbered above them: upstream's `0027_channels_id_lookup_index.sql` is
-        // `0029_channels_id_lookup_index.sql` here. See the assertion for it below.
-        assert_eq!(migrations.len(), 29);
+        // `0029_channels_id_lookup_index.sql` here, and its
+        // `0028_long_reaction_payloads.sql` is `0030_long_reaction_payloads.sql`.
+        // See the assertions for both below.
+        assert_eq!(migrations.len(), 30);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -958,6 +960,16 @@ mod tests {
             desired_schema.contains("idx_channels_id_live"),
             "desired-state schema must carry the channel-id lookup index",
         );
+
+        // Long reaction payloads (upstream's 0028, FORK-LOCAL PATCH
+        // (adrienlacombe/buzz): renumbered to 0030 here because this fork already
+        // holds 0027 and 0028).
+        assert_eq!(migrations[29].version, 30);
+        let long_reactions = migrations[29].sql.as_str();
+        assert!(
+            long_reactions.contains("ALTER TABLE reactions ALTER COLUMN emoji TYPE VARCHAR(66)")
+        );
+        assert!(desired_schema.contains("emoji               VARCHAR(66) NOT NULL"));
     }
 
     #[test]
@@ -1200,7 +1212,7 @@ mod tests {
         run_migrations(&pool)
             .await
             .expect("retry succeeds after operator repair");
-        assert_eq!(applied_versions(&pool).await.last().copied(), Some(29));
+        assert_eq!(applied_versions(&pool).await.last().copied(), Some(30));
     }
 
     #[tokio::test]
