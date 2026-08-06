@@ -34,6 +34,8 @@ pub mod outside_execution;
 pub mod pairing;
 /// Presence status types shared across crates.
 pub mod presence;
+/// NIP-PMA owner-encrypted private managed-agent wire codec.
+pub mod private_managed_agent;
 /// Canonical relay runtime identities.
 pub mod relay;
 /// Wire format for sponsorship requests and results.
