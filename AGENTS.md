@@ -1331,7 +1331,8 @@ reconnects preserve pending avatar verification work):
 - `resetRenderScopedReactionHydration()` — reaction hydration cache
 - `clearSearchHitEventCache()` — search result event cache
 - `clearMarkdownNodeCache()` — markdown parse-node cache
-- `resetLinkPreviewTitleCache()` — link preview title cache (Buzz entity titles come from relay events)
+- `resetLinkPreviewMetadataCache()` — link preview metadata cache (Buzz entity titles come from relay events)
+- `resetBackgroundMediaUploads()` — in-flight background media upload store
 
 **If you add a new module-level cache, Map, or class instance that holds
 community-scoped data, you must add its reset to `resetCommunityState()`.**
