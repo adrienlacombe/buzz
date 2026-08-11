@@ -180,7 +180,7 @@ place.
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | The two locks pin mesh-llm independently (desktop is outside the root workspace) and can name different revs — at the time of the patch, root `tag=v0.73.1` (`43103c5c`) vs desktop `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit. **Since the 2026-07-31 sync both locks pin `tag=v0.74.0` (`e60b2fe4`), so the patch is a temporary no-op — do not delete it.** The locks stay independent; the next bump that moves one and not the other re-breaks the root-lock version |
 | `docker.yml` | `PUSH_GATEWAY_IMAGE` override; owner-correct attestation hint | Push-gateway image was hardcoded to `ghcr.io/block/buzz-push-gateway` in nine places, so `GHCR_IMAGE` could not retarget it |
-| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms; `release-macos-unsigned` runs without `--no-sign`, sets `BUZZ_MACOS_ADHOC_SIGN=1`, asserts the bundle signature, and builds `buzz-backend-kubernetes` among its sidecars | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published. `--no-sign` suppressed updater signing too, so the `.app.tar.gz` shipped with no `.sig`; without ad-hoc signing the bundle had no signature at all and macOS called it damaged — see [Desktop auto-update](#desktop-auto-update-linux--windows--works). **`release-macos-unsigned` is a fork-added job, so upstream's sweeps across its own lanes never reach it.** When upstream added the `buzz-backend-kubernetes` sidecar to every non-Windows lane (#4289) this job kept the old list, and because `tauri.conf.json`'s `externalBin` is shared while `scripts/bundle-sidecars.sh` exits 1 on a missing binary, the fork's only `darwin-aarch64` lane would have failed — with no merge conflict anywhere. Re-check this job's sidecar list whenever upstream touches one of theirs. **Do not name the release-upload command anywhere in this file, even in a comment:** `scripts/test-release-ref-contract.sh` counts occurrences of that string and requires exactly two |
+| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms; `release-macos-unsigned` runs without `--no-sign`, sets `BUZZ_MACOS_ADHOC_SIGN=1`, asserts the bundle signature, and builds `buzz-backend-kubernetes` among its sidecars | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published. `--no-sign` suppressed updater signing too, so the `.app.tar.gz` shipped with no `.sig`; without ad-hoc signing the bundle had no signature at all and macOS called it damaged — see [Desktop auto-update](#desktop-auto-update-linux--windows--works). **`release-macos-unsigned` is a fork-added job, so upstream's sweeps across its own lanes never reach it.** When upstream added the `buzz-backend-kubernetes` sidecar to every non-Windows lane (#4289) this job kept the old list, and because `tauri.conf.json`'s `externalBin` is shared while `scripts/bundle-sidecars.sh` exits 1 on a missing binary, the fork's only `darwin-aarch64` lane would have failed — with no merge conflict anywhere. Re-check this job's sidecar list whenever upstream touches one of theirs. **Do not name the release-upload command anywhere in this file, even in a comment:** `scripts/test-release-ref-contract.sh` counts occurrences of that string and, since upstream #5398 moved rolling-manifest promotion out of this file, requires exactly **one** — it was two before the 2026-08-11 sync. `scripts/test-oss-desktop-promotion.sh` additionally asserts that the rolling-release upload does *not* appear here at all, so prose naming it fails two contracts, not one. See [Rolling-manifest promotion](#rolling-manifest-promotion-moved-upstream-and-the-fork-cannot-reach-it) |
 | `release.yml` + `macos-canary.yml` | `BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"` on the build step of the three fork-runnable lanes and the canary | Skips the "Join or create a community" picker and auto-creates the single allowlisted community. This is **upstream's own opt-in**, for builds whose default relay is reviewed and fixed — no source change was needed. It works because release builds already default to `wss://relay.bitcoinmarkets.app` (`relay.rs` → `relay/allowlist.rs`) and `shouldAutoConnectDefaultRelay` accepts any non-loopback `ws(s)` URL. `option_env!`, so it is **compile-time**: absent at build time it silently does nothing. Deliberately not set on the two `block/buzz` macOS lanes, and irrelevant in debug builds where the loopback default correctly keeps the picker. Assert it with the `#[ignore]`d `compiled_flag_matches_expected` test and `BUZZ_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY` |
 | `desktop/scripts/build-release-config.mjs` | `BUZZ_MACOS_ADHOC_SIGN=1` emits `bundle.macOS.signingIdentity: "-"` | Ad-hoc bundle signing for the one macOS lane nothing else signs. Opt-in and off by default, so the two `block/buzz` lanes still reach `block/apple-codesign-action` unsigned — setting it unconditionally would sign a bundle that is about to be re-signed. It has to be config rather than a post-build `codesign`, because Tauri builds the DMG in the same invocation |
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
@@ -728,6 +728,42 @@ the app checks on mount and every 6 h
 
 `.deb` is not auto-updatable by Tauri constraint (`release.yml:699`), so Linux
 auto-update is **AppImage only**.
+
+#### Rolling-manifest promotion moved upstream, and the fork cannot reach it
+
+**As of the 2026-08-11 sync the heading above is aspirational again, and nothing
+in CI says so.** Upstream #5398 split publishing the rolling `latest.json` out of
+`release.yml` into a separate, **manually dispatched**
+`.github/workflows/promote-oss-desktop-release.yml`. `assemble-manifest` still
+builds the fork's manifest correctly and still stages it — now as
+`updater-manifest.json` on the versioned `desktop-v<version>` release — but the
+step that copied it to `buzz-desktop-latest` is gone. Since
+`BUZZ_UPDATER_ENDPOINT` points at
+`…/releases/download/buzz-desktop-latest/latest.json`, the fork's rolling
+manifest now freezes at whatever was last promoted and installed clients stop
+seeing new versions. **The merge was clean and every gate passed** — this is the
+[clean merge is not a correct merge](#4-a-clean-merge-is-not-a-correct-merge)
+failure mode, found by reading the diff at a patch site.
+
+Three things block the fork from dispatching the new workflow, and only the first
+is the usual one-line guard:
+
+| Blocker | Where | Note |
+|---|---|---|
+| `if: github.repository == 'block/buzz'` | `promote-oss-desktop-release.yml` | The ordinary `RELEASE_REPO` treatment. Safe: `test-oss-desktop-promotion.sh` greps only for `if: github.repository ==`, not the literal owner |
+| `[[ "$REPOSITORY" == "block/buzz" ]] \|\| fail`, plus two hardcoded `https://github.com/block/buzz/releases/download/…` URL literals | `scripts/promote-oss-desktop-release.sh` | Repo-derivable. No contract pins the owner in the promoter; the URL check is pinned only as the substring `desktop-v" + $version + "/"` |
+| `EXPECTED_PLATFORMS` requires **exactly** the four upstream triples | same script | **This is the one that needs a decision, not a patch.** The fork produces three — `release-macos-x64` is pinned to `block/buzz` (`release.yml:273`) so `darwin-x86_64` never exists here, and the live rolling manifest is already `{darwin-aarch64, linux-x86_64, windows-x86_64}`. It cannot simply be relaxed: `test-oss-desktop-promotion-behavior.sh` runs the promoter with `GITHUB_REPOSITORY=block/buzz` and asserts that both a missing platform and an extra platform are *rejected*, so the expected set has to become repo-derived while staying exact per repo |
+
+Do not paper over this by adding an upload back into `release.yml` — that fails
+both the `gh release upload` count in `test-release-ref-contract.sh` and the
+explicit negative assertion in `test-oss-desktop-promotion.sh`. The promotion
+workflow is the intended writer; the fork needs its own path through it.
+
+Worth knowing before testing any of it: the fork's rolling `latest.json` is
+currently version **`0.5.100`**, above every real upstream version, and the
+promoter refuses downgrades. So even a fully patched promotion would refuse
+`0.5.9` until that value is reset — it reads like a forced test value rather than
+a real release, and its provenance predates this note.
 
 #### macOS is unsigned, and users must be told what that means
 
