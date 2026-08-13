@@ -904,6 +904,7 @@ dependencies = [
  "buzz-auth",
  "buzz-core",
  "buzz-db",
+ "buzz-deletion",
  "buzz-media",
  "buzz-pubsub",
  "buzz-search",
@@ -1113,6 +1114,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-deletion"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buzz-core",
+ "buzz-db",
+ "buzz-media",
+ "chrono",
+ "clap",
+ "deadpool-redis",
+ "hex",
+ "redis",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "uuid 1.23.1",
+]
+
+[[package]]
 name = "buzz-dev-mcp"
 version = "0.1.0"
 dependencies = [
@@ -1306,6 +1329,7 @@ dependencies = [
  "buzz-core",
  "buzz-datastore-tracing",
  "buzz-db",
+ "buzz-deletion",
  "buzz-media",
  "buzz-pubsub",
  "buzz-relay-mesh",
@@ -1465,6 +1489,7 @@ version = "0.1.0"
 dependencies = [
  "buzz-core",
  "buzz-db",
+ "buzz-deletion",
  "chrono",
  "cron",
  "dashmap",
@@ -6512,6 +6537,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-app-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
+dependencies = [
+ "bitflags 2.13.0",
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-core-foundation"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11508,15 +11544,15 @@ dependencies = [
 
 [[package]]
 name = "webbrowser"
-version = "1.2.1"
+version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fc95580916af1e68ff6a7be07446fc5db73ebf71cf092de939bbf5f7e189f72"
+checksum = "62c35be770821a214dbc362fc26908c853e776c0004294d0b10b8a6bad582f94"
 dependencies = [
- "core-foundation 0.10.1",
  "jni 0.22.4",
  "log",
  "ndk-context",
  "objc2",
+ "objc2-app-kit",
  "objc2-foundation",
  "url",
  "web-sys",
