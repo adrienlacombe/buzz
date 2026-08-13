@@ -1424,10 +1424,15 @@ mod tests {
             surface
         }
 
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream's deletion migration is
+        // 0029; it is 0031 here because this fork already holds 0027 and 0028, so
+        // upstream's own new migrations arrive renumbered above them. Only this
+        // version literal moves — the surrounding names and assertion messages are
+        // left as upstream wrote them so this stays one hunk for the next merge.
         let migration_0029: &str = MIGRATOR
             .iter()
-            .find(|migration| migration.version == 29)
-            .expect("embedded migration 0029")
+            .find(|migration| migration.version == 31)
+            .expect("embedded migration 0031 (upstream's 0029)")
             .sql
             .as_ref();
         let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
