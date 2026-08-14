@@ -919,7 +919,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uuid",
+ "uuid 1.23.1",
 ]
 
 [[package]]
