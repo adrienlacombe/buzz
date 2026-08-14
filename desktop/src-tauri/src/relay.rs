@@ -546,6 +546,9 @@ pub struct AgentProfileInfo {
 // conflict site from its sorted module list.
 pub mod allowlist;
 
+mod get;
+pub use get::get_relay_json;
+
 mod submit;
 pub use submit::{
     submit_event, submit_event_at_with_keys, submit_signed_event_at_with_keys, SubmitEventResponse,
