@@ -625,8 +625,8 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 30 migrations; this
-        // fork adds two of its own, so the count is 32 here.
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream ships 31 migrations; this
+        // fork adds two of its own, so the count is 33 here.
         //
         // The fork's 0027 and 0028 belong to the NIP-SW wallet binding, which this
         // fork has since removed in favour of the Nostr key controlling the Starknet
@@ -644,8 +644,10 @@ mod tests {
         // `0028_long_reaction_payloads.sql` is `0030_long_reaction_payloads.sql`,
         // its `0029_community_deletion.sql` is `0031_community_deletion.sql`, and
         // its `0030_community_deletion_recovery.sql` is
-        // `0032_community_deletion_recovery.sql`. See the assertions for each below.
-        assert_eq!(migrations.len(), 32);
+        // `0032_community_deletion_recovery.sql`, and its
+        // `0031_workflow_run_error_codes.sql` is
+        // `0033_workflow_run_error_codes.sql`. See the assertions for each below.
+        assert_eq!(migrations.len(), 33);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1070,6 +1072,31 @@ mod tests {
         assert_eq!(migrations[31].version, 32);
         let deletion_recovery = migrations[31].sql.as_str();
         assert!(deletion_recovery.contains("SET LOCAL lock_timeout = '5s'"));
+    }
+
+    #[test]
+    fn workflow_run_error_codes_are_additive_and_backfilled_without_parsing_diagnostics() {
+        let mut migrations: Vec<_> = MIGRATOR.iter().collect();
+        migrations.sort_by_key(|migration| migration.version);
+
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): upstream's
+        // `0031_workflow_run_error_codes.sql` is `0033` here — the fork holds 0027
+        // and 0028, so upstream's new migrations arrive renumbered above them. Index
+        // and version both shift by the fork's two.
+        assert_eq!(migrations[32].version, 33);
+        let sql = migrations[32].sql.as_str();
+        assert!(sql.contains("ALTER TABLE workflow_runs ADD COLUMN error_code TEXT"));
+        assert!(sql.contains("SET error_code = 'legacy_unclassified'"));
+        assert!(sql.contains("status IN ('failed', 'cancelled')"));
+        assert!(!sql.contains("error_message LIKE"));
+        assert!(!MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 1)
+            .expect("initial migration")
+            .sql
+            .as_str()
+            .contains("error_code"));
+        assert!(include_str!("../../../schema/schema.sql").contains("error_code          TEXT"));
     }
 
     #[test]

@@ -26,11 +26,8 @@ fn configured_env_var(name: &str) -> Option<String> {
 pub fn relay_ws_url() -> String {
     configured_env_var("BUZZ_RELAY_URL")
         .or_else(|| option_env!("BUZZ_DESKTOP_BUILD_RELAY_URL").map(str::to_string))
-        // FORK-LOCAL PATCH (adrienlacombe/buzz): in a release build, fall back to
-        // the allowlisted relay instead of loopback. Otherwise the shipped app
-        // defaults to ws://localhost:3000, which the allowlist then rejects,
-        // producing a client that cannot connect at all. Returns None in debug so
-        // local development keeps the loopback default below.
+        // FORK-LOCAL PATCH (adrienlacombe/buzz): release builds fall back to the
+        // allowlisted relay; loopback would be rejected. None in debug. See AGENTS.md.
         .or_else(allowlist::default_relay_url)
         .unwrap_or_else(|| DEFAULT_RELAY_WS_URL.to_string())
 }
@@ -538,13 +535,13 @@ pub struct AgentProfileInfo {
 
 // ── Signed-event submission ─────────────────────────────────────────────────
 
-// FORK-LOCAL PATCH (adrienlacombe/buzz): single-relay host allowlist, declared
-// as a submodule of `relay` rather than at the crate root. Upstream's lib.rs
-// sits at exactly the 1000-line desktop file-size ratchet limit, so a fork-local
-// `mod` line there fails `just desktop-check` the moment upstream adds anything.
-// Keeping the declaration here costs lib.rs nothing and removes a permanent
-// conflict site from its sorted module list.
+// FORK-LOCAL PATCH (adrienlacombe/buzz): allowlist declared here rather than in
+// lib.rs, whose sorted module list is a permanent conflict site. Kept terse: this
+// file is against the 1000-line ratchet. Reasoning in AGENTS.md.
 pub mod allowlist;
+
+mod get;
+pub use get::get_relay_json;
 
 mod submit;
 pub use submit::{
