@@ -33,12 +33,16 @@
 #
 # 3. IMAGE IS var.relay_image — ONE CD PIN. The binary ships in the relay
 #    image (`/usr/local/bin/buzz-avnu-proxy`; Dockerfile already builds and
-#    copies it). The task uses `command = ["/usr/local/bin/buzz-avnu-proxy"]`
-#    and `image = var.relay_image`. There is deliberately no separate
-#    avnu_proxy_image variable: CD already passes relay_image on every apply,
-#    so one pin updates both the relay and this proxy. Indexer does the
-#    opposite (own ECR image) because it is a different artefact — do not copy
-#    that here, and do not invent a second image writer that could un-pin CD.
+#    copies it). The task overrides `entryPoint` to
+#    `["/usr/local/bin/buzz-avnu-proxy"]` (not `command`) and uses
+#    `image = var.relay_image`. Docker ENTRYPOINT is buzz-relay; ECS `command`
+#    only replaces CMD, so leaving entryPoint alone would still start the
+#    relay (and crash on a missing Postgres pool). There is deliberately no
+#    separate avnu_proxy_image variable: CD already passes relay_image on
+#    every apply, so one pin updates both the relay and this proxy. Indexer
+#    does the opposite (own ECR image) because it is a different artefact —
+#    do not copy that here, and do not invent a second image writer that
+#    could un-pin CD.
 #
 # 4. SECRET ALREADY EXISTS. AWS already holds buzz-dev/avnu-proxy (unmanaged
 #    version) with JSON keys AVNU_API_KEY and PROXY_AUTH_TOKEN. This file
@@ -362,9 +366,10 @@ resource "aws_ecs_task_definition" "avnu_proxy" {
     image     = var.relay_image
     essential = true
 
-    # ENTRYPOINT stays the relay image default; override only the command so
-    # this task runs buzz-avnu-proxy instead of buzz-relay.
-    command = ["/usr/local/bin/buzz-avnu-proxy"]
+    # Image ENTRYPOINT is buzz-relay. Override entryPoint (not command): ECS
+    # command only replaces Docker CMD, so the proxy path as command would be
+    # passed as args to buzz-relay and the task would still start the relay.
+    entryPoint = ["/usr/local/bin/buzz-avnu-proxy"]
 
     portMappings = [
       { containerPort = local.avnu_proxy_port, protocol = "tcp" },

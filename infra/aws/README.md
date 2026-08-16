@@ -348,11 +348,12 @@ the key into the image, repo, or client.
 
 **Image is `var.relay_image`.** The binary ships in the relay image at
 `/usr/local/bin/buzz-avnu-proxy` (Dockerfile already builds and copies it).
-ECS overrides `command` to that binary. There is deliberately no separate
-image variable — CD already passes `relay_image` on every apply, so one pin
-covers both the relay and this proxy. Do not invent a second writer that could
-un-pin CD (indexer needs its own ECR image because it is a different artefact;
-this does not).
+ECS overrides `entryPoint` to that binary (not `command` — Docker
+ENTRYPOINT is buzz-relay, and ECS `command` only replaces CMD). There is
+deliberately no separate image variable — CD already passes `relay_image` on
+every apply, so one pin covers both the relay and this proxy. Do not invent a
+second writer that could un-pin CD (indexer needs its own ECR image because it
+is a different artefact; this does not).
 
 It is an HTTP service on port **8788**, following the indexer ingress pattern
 (not paymaster egress-only):
