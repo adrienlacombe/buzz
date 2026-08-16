@@ -34,22 +34,22 @@ height (every 2016 blocks).
 
 ## INDEXER_URL
 
-CEO-confirmed listing base for the desktop client. Configurable so the host
-can be swapped later; **no public hostname yet**. Default:
+Required env (or the product public host). **No localhost default** — Adrien
+does not want the indexer run locally. Loopback (`http://127.0.0.1:8787`) was
+listing-proof only and must not ship.
 
 ```text
-INDEXER_URL=http://127.0.0.1:8787
+INDEXER_URL=https://markets.bitcoinmarkets.app
 ```
 
-(Adrien's shared machine localhost. Override with `INDEXER_URL` /
-`VITE_INDEXER_URL`.)
+(`VITE_INDEXER_URL` is accepted in the desktop Vite bundle.)
 
-Unauthenticated listing/health only:
+Listing/health (no auth):
 
 - `GET {INDEXER_URL}/api/markets`
 - `GET {INDEXER_URL}/health`
 
-v1 market row:
+v1 market:
 
 - `address`: `0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8`
 - `title`: Bitcoin difficulty after next retarget
@@ -57,12 +57,11 @@ v1 market row:
 - `xAxisLabel`: Difficulty
 - collateral UI copy: **BTC**
 
-`ADMIN_API_KEY` exists **only on the indexer host**. Do **not** read it, and do
-**not** put it in the Buzz repo, desktop client, or PR. Listing/health do not
-need it.
+Do **not** put indexer `ADMIN_API_KEY` or `AVNU_API_KEY` in the Buzz repo,
+desktop client, or PR. Listing/health do not need `ADMIN_API_KEY`. Set
+`AVNU_API_KEY` only on `buzz-avnu-proxy` at runtime.
 
-Cloud VMs cannot reach Adrien's localhost — wire the **desktop client only**;
-do not live-fetch the default URL from CI/agent. See `infra/aws/markets.tf.md`.
+Clients refuse loopback `INDEXER_URL` values. See `infra/aws/markets.tf.md`.
 
 ### prepareTrade (bet path)
 
@@ -73,6 +72,7 @@ There is no SDK `prepareLognormalTrade`. Hints set both `l2_norm_denom` and
 `[strkBTC.transfer(feeRecipient, feeAmount), ...trade.calls]`
 
 No `executeTrade()`. Do not bump approve / `supplied_collateral` for the fee.
+**Do not mix Lightning into the bet path.**
 
 ## AVNU_API_KEY
 

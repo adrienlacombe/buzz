@@ -19,11 +19,11 @@
 //!                       Test:    https://sepolia.paymaster.avnu.fi
 //! BIND_ADDR             Listen address. Default: 0.0.0.0:8788
 //!
-//! INDEXER_URL           Listing clients (desktop) default to
-//!                       http://127.0.0.1:8787 (Adrien's machine). Override
-//!                       for a public host. GET {INDEXER_URL}/api/markets,
-//!                       GET {INDEXER_URL}/health. Cloud agents must not
-//!                       live-fetch the default URL.
+//! INDEXER_URL           Required on listing clients (or product public host
+//!                       https://markets.bitcoinmarkets.app). NO localhost
+//!                       default — do not ship http://127.0.0.1:8787.
+//!                       GET {INDEXER_URL}/api/markets, GET {INDEXER_URL}/health.
+//!                       Never put ADMIN_API_KEY / AVNU_API_KEY in the repo.
 //! ```
 
 use axum::{
@@ -38,11 +38,11 @@ use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const DEFAULT_UPSTREAM: &str = "https://starknet.paymaster.avnu.fi";
 const DEFAULT_BIND: &str = "0.0.0.0:8788";
-const DEFAULT_INDEXER_URL: &str = "http://127.0.0.1:8787";
+const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
 
 #[derive(Clone)]
 struct AppState {
@@ -80,13 +80,20 @@ async fn main() -> Result<(), BootError> {
         .trim_end_matches('/')
         .to_string();
 
-    // Proxy does not call the indexer. Listing clients default to Adrien's
-    // localhost indexer; cloud agents must not live-fetch that host.
+    // Proxy does not call the indexer. Listing clients use product host /
+    // required INDEXER_URL — never invent a localhost default here.
     match std::env::var("INDEXER_URL") {
+        Ok(url) if url.contains("127.0.0.1") || url.contains("localhost") => {
+            warn!(
+                indexer_url = %url,
+                product = PRODUCT_INDEXER_URL,
+                "INDEXER_URL points at loopback; use https://markets.bitcoinmarkets.app (no localhost default)"
+            );
+        }
         Ok(url) => info!(indexer_url = %url, "INDEXER_URL set"),
         Err(_) => info!(
-            default = DEFAULT_INDEXER_URL,
-            "INDEXER_URL unset on this process (desktop default is Adrien localhost indexer)"
+            product = PRODUCT_INDEXER_URL,
+            "INDEXER_URL unset on this process (clients use https://markets.bitcoinmarkets.app)"
         ),
     }
 

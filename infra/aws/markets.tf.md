@@ -1,11 +1,12 @@
-# Markets indexer (listing) — desktop client only
+# Markets indexer (listing)
 #
-# CEO-confirmed. No public hostname yet. Desktop default:
-#   INDEXER_URL=http://127.0.0.1:8787
-# (Adrien's shared machine localhost.) Make INDEXER_URL / VITE_INDEXER_URL
-# configurable so the host can be swapped later.
+# Product INDEXER_URL (required env, or this public host):
+#   INDEXER_URL=https://markets.bitcoinmarkets.app
 #
-# Unauthenticated:
+# NO localhost default. Adrien does not want this run locally.
+# http://127.0.0.1:8787 was listing-proof only — do not ship it as a client default.
+#
+# Listing/health (no auth):
 #   GET {INDEXER_URL}/api/markets
 #   GET {INDEXER_URL}/health
 #
@@ -14,10 +15,11 @@
 #   title        Bitcoin difficulty after next retarget
 #   marketType   lognormal
 #   xAxisLabel   Difficulty
-#   collateral   BTC (UI copy only)
+#   collateral   BTC (UI copy)
 #
-# ADMIN_API_KEY exists ONLY on the indexer host. Do NOT read it. Do NOT put it
-# in the Buzz repo, desktop client, or PR. Listing/health do not need it.
+# Do NOT put ADMIN_API_KEY or AVNU_API_KEY in the Buzz repo / client / PR.
+# Listing/health do not need ADMIN_API_KEY. AVNU_API_KEY belongs only on
+# buzz-avnu-proxy at runtime.
 #
-# Cloud VMs cannot reach Adrien's localhost — do not live-fetch this URL from
-# CI/agent. Wire the desktop client only.
+# Hostname is locked even while Markets wires the service in infra/aws and
+# DNS propagates.

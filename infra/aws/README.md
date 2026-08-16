@@ -309,11 +309,10 @@ This is a **configuration lock, not a security boundary.** It stops the shipped
 app from talking to another relay. It cannot stop someone who rebuilds the client
 or points `buzz-cli` at a different relay.
 
-**Markets indexer (desktop only).** CEO-confirmed default
-`INDEXER_URL=http://127.0.0.1:8787` on Adrien's shared machine. Configurable
-for a later public host. Listing/health need no auth. `ADMIN_API_KEY` stays on
-the indexer host only — never in this repo. Cloud VMs cannot reach localhost;
-do not live-fetch. See `markets.tf.md`.
+**Markets indexer.** Product `INDEXER_URL=https://markets.bitcoinmarkets.app`
+(required env or that public host). **No localhost default** — loopback was
+listing-proof only. Listing/health need no auth. Never commit `ADMIN_API_KEY`
+or `AVNU_API_KEY`. See `markets.tf.md`.
 
 **Who may use our relay — `require_relay_membership`.** Set it `true` in
 `dev.tfvars` and only pubkeys in the relay's membership table may use the relay;

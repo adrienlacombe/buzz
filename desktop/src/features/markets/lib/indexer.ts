@@ -1,22 +1,18 @@
 /**
- * Resolve the markets indexer base URL for listing the v1 market.
+ * Resolve the markets indexer base URL.
  *
- * Configurable via `VITE_INDEXER_URL` / `INDEXER_URL` so the host can be
- * swapped later. Default (no public hostname yet): Adrien's shared-machine
- * localhost `http://127.0.0.1:8787`.
+ * Required deploy env `INDEXER_URL` / `VITE_INDEXER_URL`, or the product
+ * public host `https://markets.bitcoinmarkets.app`. **No localhost default**
+ * — Adrien does not want this run locally. Loopback was listing-proof only.
  *
- * Public listing endpoints only (no auth):
+ * Listing/health (no auth):
  * - `GET {INDEXER_URL}/api/markets`
  * - `GET {INDEXER_URL}/health`
  *
- * `ADMIN_API_KEY` lives only on the indexer host — never read it, and never
- * put it in the Buzz repo, desktop client, or PR. Listing/health do not need it.
- *
- * Cloud VMs cannot reach Adrien's localhost; wire the desktop client only and
- * do not live-fetch this default from CI/agent environments.
+ * Never read or ship indexer `ADMIN_API_KEY` / `AVNU_API_KEY` here.
  */
 
-import { DEFAULT_INDEXER_URL } from "./constants";
+import { PRODUCT_INDEXER_URL } from "./constants";
 
 export function resolveIndexerUrl(
   env: Record<string, string | undefined> = import.meta.env as Record<
@@ -27,8 +23,14 @@ export function resolveIndexerUrl(
   const raw =
     env.VITE_INDEXER_URL?.trim() ||
     env.INDEXER_URL?.trim() ||
-    DEFAULT_INDEXER_URL;
-  return raw.replace(/\/$/, "");
+    PRODUCT_INDEXER_URL;
+  const base = raw.replace(/\/$/, "");
+  if (/127\.0\.0\.1|localhost/i.test(base)) {
+    throw new Error(
+      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app (required env / public host, no localhost default)",
+    );
+  }
+  return base;
 }
 
 /** Normalize a felt hex for equality (strip 0x, leading zeros; lowercase). */

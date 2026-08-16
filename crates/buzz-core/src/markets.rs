@@ -38,18 +38,16 @@ pub const RETARGET_INTERVAL: u64 = 2016;
 /// Halt betting this many blocks before the next retarget height.
 pub const HALT_BLOCKS_BEFORE_RETARGET: u64 = 24;
 
-/// Default indexer for listing the v1 market (CEO-confirmed): Adrien's shared
-/// machine localhost `127.0.0.1:8787`. No public hostname yet — override with
-/// `INDEXER_URL` to swap hosts later. Cloud VMs cannot reach that host; wire
-/// the desktop client only and do not live-fetch from CI/agent.
+/// Product indexer host on `bitcoinmarkets.app`.
+///
+/// Deploy must set `INDEXER_URL` to this value (or rely on this public host).
+/// **No localhost default** — Adrien does not want the indexer run locally.
+/// Loopback (`http://127.0.0.1:8787`) was listing-proof only and must not ship.
 ///
 /// Listing endpoints (no auth; never use indexer `ADMIN_API_KEY` here):
 /// - `GET {INDEXER_URL}/api/markets`
 /// - `GET {INDEXER_URL}/health`
-pub const DEFAULT_INDEXER_URL: &str = "http://127.0.0.1:8787";
-
-/// Alias kept for older call sites / docs.
-pub const PRODUCT_INDEXER_URL: &str = DEFAULT_INDEXER_URL;
+pub const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
 
 /// Keyring entry name for the human identity nsec.
 pub const HUMAN_IDENTITY_KEYRING_NAME: &str = "identity";
@@ -63,6 +61,12 @@ pub enum MarketsError {
     /// A keyring name was empty or malformed.
     #[error("invalid keyring name: {0}")]
     InvalidKeyringName(String),
+    /// `INDEXER_URL` pointed at loopback; public product host required.
+    #[error(
+        "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app \
+         (required env / public host, no localhost default)"
+    )]
+    IndexerUrlLoopback,
 }
 
 /// Computes the wallet fee for a trade collateral amount.
@@ -143,18 +147,23 @@ pub fn is_human_keyring_name(name: &str) -> bool {
 
 /// Resolve the markets indexer base URL from `INDEXER_URL`.
 ///
-/// Configurable; defaults to [`DEFAULT_INDEXER_URL`] (`http://127.0.0.1:8787`).
-pub fn resolve_indexer_url() -> String {
+/// Required env, or the product public host [`PRODUCT_INDEXER_URL`].
+/// Refuses loopback — no `http://127.0.0.1:8787` default.
+pub fn resolve_indexer_url() -> Result<String, MarketsError> {
     resolve_indexer_url_from(std::env::var("INDEXER_URL").ok().as_deref())
 }
 
 /// Resolve from an optional raw env value (tests / callers that already read env).
-pub fn resolve_indexer_url_from(raw: Option<&str>) -> String {
+pub fn resolve_indexer_url_from(raw: Option<&str>) -> Result<String, MarketsError> {
     let chosen = raw
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or(DEFAULT_INDEXER_URL);
-    chosen.trim_end_matches('/').to_string()
+        .unwrap_or(PRODUCT_INDEXER_URL);
+    let base = chosen.trim_end_matches('/');
+    if base.contains("127.0.0.1") || base.to_ascii_lowercase().contains("localhost") {
+        return Err(MarketsError::IndexerUrlLoopback);
+    }
+    Ok(base.to_string())
 }
 
 #[cfg(test)]
@@ -234,18 +243,30 @@ mod tests {
     }
 
     #[test]
-    fn indexer_url_defaults_to_adrien_localhost() {
-        assert_eq!(DEFAULT_INDEXER_URL, "http://127.0.0.1:8787");
-        assert_eq!(PRODUCT_INDEXER_URL, DEFAULT_INDEXER_URL);
-        assert_eq!(resolve_indexer_url_from(None), DEFAULT_INDEXER_URL);
-        assert_eq!(resolve_indexer_url_from(Some("")), DEFAULT_INDEXER_URL);
+    fn indexer_url_is_product_host_never_loopback() {
+        assert_eq!(PRODUCT_INDEXER_URL, "https://markets.bitcoinmarkets.app");
+        assert!(PRODUCT_INDEXER_URL.starts_with("https://"));
+        assert!(!PRODUCT_INDEXER_URL.contains("127.0.0.1"));
+        assert!(!PRODUCT_INDEXER_URL.contains("localhost"));
         assert_eq!(
-            resolve_indexer_url_from(Some("http://127.0.0.1:8787/")),
-            "http://127.0.0.1:8787"
+            resolve_indexer_url_from(None).unwrap(),
+            PRODUCT_INDEXER_URL
         );
         assert_eq!(
-            resolve_indexer_url_from(Some("https://markets.bitcoinmarkets.app/")),
+            resolve_indexer_url_from(Some("")).unwrap(),
+            PRODUCT_INDEXER_URL
+        );
+        assert_eq!(
+            resolve_indexer_url_from(Some("https://markets.bitcoinmarkets.app/")).unwrap(),
             "https://markets.bitcoinmarkets.app"
+        );
+        assert_eq!(
+            resolve_indexer_url_from(Some("http://127.0.0.1:8787")),
+            Err(MarketsError::IndexerUrlLoopback)
+        );
+        assert_eq!(
+            resolve_indexer_url_from(Some("http://localhost:8787")),
+            Err(MarketsError::IndexerUrlLoopback)
         );
     }
 }

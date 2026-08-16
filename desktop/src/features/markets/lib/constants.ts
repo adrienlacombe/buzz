@@ -6,20 +6,16 @@
  */
 
 /**
- * Default indexer for listing the v1 market (CEO-confirmed): Adrien's shared
- * machine localhost. No public hostname yet — override `INDEXER_URL` /
- * `VITE_INDEXER_URL` to swap hosts later. Cloud VMs cannot reach this URL;
- * desktop client only. Never put indexer `ADMIN_API_KEY` in this repo/client.
+ * Product indexer host. `INDEXER_URL` / `VITE_INDEXER_URL` may set this;
+ * when unset the client uses this public host. **No localhost default** —
+ * Adrien does not want the indexer run locally. Loopback (`127.0.0.1:8787`)
+ * was listing-proof only and must not ship.
+ *
+ * Never put indexer `ADMIN_API_KEY` or `AVNU_API_KEY` in this repo/client.
  */
-export const DEFAULT_INDEXER_URL = "http://127.0.0.1:8787";
+export const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
 
-/** @deprecated Use {@link DEFAULT_INDEXER_URL}. */
-export const PRODUCT_INDEXER_URL = DEFAULT_INDEXER_URL;
-
-/**
- * Live LOGNORMAL difficulty market (CEO listing address, padded).
- * Match via {@link normalizeMarketAddress} if the indexer omits a leading zero.
- */
+/** Live LOGNORMAL difficulty market (padded felt). */
 export const DIFFICULTY_MARKET =
   "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
 

@@ -168,7 +168,7 @@ export function MarketsScreen() {
         <p className="text-muted-foreground text-xs">
           {indexerHost
             ? `Indexer ${indexerHost}`
-            : "Indexer (INDEXER_URL / default localhost)"}
+            : "Indexer (INDEXER_URL / markets.bitcoinmarkets.app)"}
           {height != null ? ` · Bitcoin tip ${height}` : null}
           {halted ? " · betting paused near retarget" : null}
         </p>

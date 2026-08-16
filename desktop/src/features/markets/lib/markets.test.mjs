@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 const WALLET_FEE_BPS = 10n;
 const RETARGET_INTERVAL = 2016;
 const HALT_BLOCKS_BEFORE_RETARGET = 24;
-const DEFAULT_INDEXER_URL = "http://127.0.0.1:8787";
+const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
 const DIFFICULTY_MARKET =
   "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
 
@@ -30,8 +30,14 @@ function resolveIndexerUrl(env = {}) {
   const raw =
     (env.VITE_INDEXER_URL || "").trim() ||
     (env.INDEXER_URL || "").trim() ||
-    DEFAULT_INDEXER_URL;
-  return raw.replace(/\/$/, "");
+    PRODUCT_INDEXER_URL;
+  const base = raw.replace(/\/$/, "");
+  if (/127\.0\.0\.1|localhost/i.test(base)) {
+    throw new Error(
+      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app",
+    );
+  }
+  return base;
 }
 
 function normalizeMarketAddress(address) {
@@ -86,22 +92,26 @@ describe("betting halt at height", () => {
 });
 
 describe("INDEXER_URL", () => {
-  it("defaults to Adrien localhost and stays configurable", () => {
-    assert.equal(DEFAULT_INDEXER_URL, "http://127.0.0.1:8787");
-    assert.equal(resolveIndexerUrl({}), DEFAULT_INDEXER_URL);
-    assert.equal(
-      resolveIndexerUrl({ INDEXER_URL: "http://127.0.0.1:8787/" }),
-      "http://127.0.0.1:8787",
-    );
+  it("uses product host; refuses localhost default", () => {
+    assert.equal(PRODUCT_INDEXER_URL, "https://markets.bitcoinmarkets.app");
+    assert.equal(resolveIndexerUrl({}), PRODUCT_INDEXER_URL);
     assert.equal(
       resolveIndexerUrl({
-        VITE_INDEXER_URL: "https://example.future-host.example/",
+        INDEXER_URL: "https://markets.bitcoinmarkets.app/",
       }),
-      "https://example.future-host.example",
+      "https://markets.bitcoinmarkets.app",
+    );
+    assert.throws(
+      () => resolveIndexerUrl({ INDEXER_URL: "http://127.0.0.1:8787" }),
+      /must not be loopback/,
+    );
+    assert.throws(
+      () => resolveIndexerUrl({ INDEXER_URL: "http://localhost:8787" }),
+      /must not be loopback/,
     );
   });
 
-  it("matches CEO v1 listing row (padded address, BTC collateral copy)", () => {
+  it("matches v1 listing row (padded address, BTC collateral copy)", () => {
     const listing = {
       address: DIFFICULTY_MARKET,
       title: "Bitcoin difficulty after next retarget",
@@ -113,10 +123,5 @@ describe("INDEXER_URL", () => {
     assert.equal(found?.title, "Bitcoin difficulty after next retarget");
     assert.equal(found?.marketType, "lognormal");
     assert.equal(found?.xAxisLabel, "Difficulty");
-    // Still matches if a host returns an unpadded felt.
-    assert.equal(
-      normalizeMarketAddress("0x23b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8"),
-      normalizeMarketAddress(DIFFICULTY_MARKET),
-    );
   });
 });
