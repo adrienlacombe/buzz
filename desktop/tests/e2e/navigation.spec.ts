@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { buildMessageLink } from "@/features/messages/lib/messageLink";
+
 import { installMockBridge } from "../helpers/bridge";
 import { openSettings } from "../helpers/settings";
 
@@ -402,8 +404,13 @@ test("message links to visible root messages open the thread panel", async ({
     "Welcome to general",
   );
 
-  const link =
+  // Paste may use the legacy scheme; Copy link must emit the product scheme.
+  const pastedLink =
     "buzz://message?channel=9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50&id=mock-general-welcome";
+  const copiedLink = buildMessageLink({
+    channelId: "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50",
+    messageId: "mock-general-welcome",
+  });
   const composerInput = page.getByTestId("message-input");
   await composerInput.fill("Root link repro #random ");
   await composerInput.focus();
@@ -417,7 +424,7 @@ test("message links to visible root messages open the thread panel", async ({
         clipboardData,
       }),
     );
-  }, link);
+  }, pastedLink);
   const composerLink = composerInput.locator('[data-composer-message-link=""]');
   await expect(composerLink).toHaveText("general · mock-gen");
   await expect(composerLink).toHaveClass(/mention-chip/);
@@ -468,7 +475,7 @@ test("message links to visible root messages open the thread panel", async ({
         )?.payload.text;
       }),
     )
-    .toBe(link);
+    .toBe(copiedLink);
 
   await rootThreadLink.click({ button: "right" });
   await linkMenu.getByRole("button", { name: "Open link" }).click();

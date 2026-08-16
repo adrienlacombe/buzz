@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildMessageLink,
   isMessageLink,
+  MESSAGE_LINK_SCHEME,
   parseMessageLink,
   resolveMessageLinkRenderTarget,
 } from "./messageLink.ts";
@@ -14,12 +15,10 @@ const MESSAGE =
 const THREAD =
   "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
-// FORK-LOCAL PATCH (adrienlacombe/buzz): the emitted scheme, in one place.
-// Assertions below derive from this rather than repeating a literal, so a future
-// rename cannot fail these tests for the wrong reason. The legacy `buzz://`
-// literals further down are deliberate — those tests exist to prove old links in
-// message history still parse, so they must not follow the rename.
-const SCHEME = "bitcoinmarkets:";
+// FORK-LOCAL PATCH (adrienlacombe/buzz): assertions derive from the product
+// scheme constant. Legacy `buzz://` literals further down are deliberate —
+// those tests prove old links in message history still parse.
+const SCHEME = MESSAGE_LINK_SCHEME;
 
 test("buildMessageLink → parseMessageLink round-trips without thread", () => {
   const url = buildMessageLink({ channelId: CHANNEL, messageId: MESSAGE });
