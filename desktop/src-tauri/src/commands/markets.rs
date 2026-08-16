@@ -10,9 +10,9 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    assert_fee_is_first_call, assert_markets_signing_keyring,
-    betting_halted_by_remaining_blocks, build_validated_bet_batch, markets_signing_keyring_name,
-    resolve_avnu_proxy_url, resolve_indexer_url, BetCallHex, NOSTR_ACCOUNT_CLASS_HASH,
+    assert_fee_is_first_call, assert_markets_signing_keyring, betting_halted_by_remaining_blocks,
+    build_validated_bet_batch, markets_signing_keyring_name, resolve_avnu_proxy_url,
+    resolve_indexer_url, BetCallHex, NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
     any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
@@ -342,9 +342,9 @@ pub async fn place_bet(
     token_amount: String,
 ) -> Result<PlaceBetResult, String> {
     // Fail closed: unreachable/malformed adjustment → Err, no signing.
-    let halt = fetch_difficulty_halt_status().await.map_err(|e| {
-        format!("Betting is unavailable (Bitcoin height source unreachable): {e}")
-    })?;
+    let halt = fetch_difficulty_halt_status()
+        .await
+        .map_err(|e| format!("Betting is unavailable (Bitcoin height source unreachable): {e}"))?;
     if halt.halted {
         return Err(format!(
             "Betting is paused until after the next Bitcoin difficulty retarget ({} blocks remaining)",
@@ -561,8 +561,8 @@ pub async fn markets_indexer_url() -> Result<String, String> {
 mod tests {
     use super::*;
     use buzz_core_pkg::markets::{
-        assert_markets_signing_keyring, betting_halted_by_remaining_blocks,
-        is_human_keyring_name, MarketsError, HUMAN_IDENTITY_KEYRING_NAME,
+        assert_markets_signing_keyring, betting_halted_by_remaining_blocks, is_human_keyring_name,
+        MarketsError, HUMAN_IDENTITY_KEYRING_NAME,
     };
     use serde_json::json;
 
