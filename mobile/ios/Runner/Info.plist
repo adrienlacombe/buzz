@@ -52,6 +52,8 @@
 	     in the system permission prompts, so they are the most visible copy in the
 	     app. A sync that adds a permission key will conflict here: take upstream's
 	     new key and rewrite its Buzz to BitcoinMarkets. -->
+	<key>NSFaceIDUsageDescription</key>
+	<string>BitcoinMarkets uses Face ID to confirm sensitive identity transfers.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>BitcoinMarkets needs camera access so you can take photos to attach to messages and scan QR codes for device pairing.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

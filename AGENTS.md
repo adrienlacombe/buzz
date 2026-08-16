@@ -180,7 +180,7 @@ place.
 | `.gitattributes` | `*.lock.yml linguist-generated` | Added by `gh aw init` |
 | `ci.yml` | mesh-llm rev read from `desktop/src-tauri/Cargo.lock` | The two locks pin mesh-llm independently (desktop is outside the root workspace) and can name different revs — at the time of the patch, root `tag=v0.73.1` (`43103c5c`) vs desktop `rev=f455d493`. The step fetches the *desktop* manifest, so the root rev names a checkout never fetched. Upstream is masked by a warm cache — the step is skipped on cache hit. **Since the 2026-07-31 sync both locks pin `tag=v0.74.0` (`e60b2fe4`), so the patch is a temporary no-op — do not delete it.** The locks stay independent; the next bump that moves one and not the other re-breaks the root-lock version |
 | `docker.yml` | `PUSH_GATEWAY_IMAGE` override; owner-correct attestation hint | Push-gateway image was hardcoded to `ghcr.io/block/buzz-push-gateway` in nine places, so `GHCR_IMAGE` could not retarget it |
-| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms, and accepts `skipped` from the two lanes no fork can run (`release-macos-x64`, `desktop-release-smoke`); `release-macos-unsigned` runs without `--no-sign`, sets `BUZZ_MACOS_ADHOC_SIGN=1`, asserts the bundle signature, and builds `buzz-backend-kubernetes` among its sidecars | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published. **Upstream keeps adding lanes to that gate, and each one arrives the same way**: it pins the new job to `block/buzz`, adds `needs.<job>.result == 'success'` to `assemble-manifest`, and the new condition merges into the fork's rewritten `if:` block as *clean context* — only the `needs:` list conflicts, so the diff points at the harmless half. `desktop-release-smoke` (#5699, 2026-08-14 sync) was the third instance. The gate then fails closed on a lane that structurally cannot run here, stranding `latest.json` while every artifact uploads fine. When a sync touches this job, read the `if:` block itself, not just the conflict. `--no-sign` suppressed updater signing too, so the `.app.tar.gz` shipped with no `.sig`; without ad-hoc signing the bundle had no signature at all and macOS called it damaged — see [Desktop auto-update](#desktop-auto-update-linux--windows--works). **`release-macos-unsigned` is a fork-added job, so upstream's sweeps across its own lanes never reach it.** When upstream added the `buzz-backend-kubernetes` sidecar to every non-Windows lane (#4289) this job kept the old list, and because `tauri.conf.json`'s `externalBin` is shared while `scripts/bundle-sidecars.sh` exits 1 on a missing binary, the fork's only `darwin-aarch64` lane would have failed — with no merge conflict anywhere. Re-check this job's sidecar list whenever upstream touches one of theirs. **Do not name the release-upload command anywhere in this file, even in a comment:** `scripts/test-release-ref-contract.sh` counts occurrences of that string and, since upstream #5398 moved rolling-manifest promotion out of this file, requires exactly **one** — it was two before the 2026-08-11 sync. `scripts/test-oss-desktop-promotion.sh` additionally asserts that the rolling-release upload does *not* appear here at all, so prose naming it fails two contracts, not one. See [Rolling-manifest promotion](#rolling-manifest-promotion-moved-upstream-and-the-fork-cannot-reach-it) |
+| `release.yml` | `RELEASE_REPO` guard on `setup` + `release-linux`; `BASE` and `BUZZ_UPDATER_ENDPOINT` derive from `github.repository`; `assemble-manifest` asserts on job results instead of counting platforms, and accepts `skipped` from the one lane no fork can run (`release-macos-x64`); `release-macos-unsigned` runs without `--no-sign`, sets `BUZZ_MACOS_ADHOC_SIGN=1`, asserts the bundle signature, and builds `buzz-backend-kubernetes` among its sidecars | Guards were pinned to `block/buzz`; the updater URLs were hardcoded to Block's releases, so a fork verified its artifacts against Block's rolling release and shipped builds polling Block for updates. The `-ge 3` platform count was unreachable with both macOS jobs skipped, so `latest.json` was never published. **Upstream keeps adding lanes to that gate, and each one arrives the same way**: it pins the new job to `block/buzz`, adds `needs.<job>.result == 'success'` to `assemble-manifest`, and the new condition merges into the fork's rewritten `if:` block as *clean context* — only the `needs:` list conflicts, so the diff points at the harmless half. `desktop-release-smoke` (#5699, 2026-08-14 sync) was the third instance. The gate then fails closed on a lane that structurally cannot run here, stranding `latest.json` while every artifact uploads fine. When a sync touches this job, read the `if:` block itself, not just the conflict. **And the reverse also happens: upstream deleted `desktop-release-smoke` outright one day later (#5914, 2026-08-16 sync), which left the fork's freshly added condition and `needs:` entry naming a job that no longer exists.** Both were dropped in that sync. A dangling `needs.<job>.result` is not a red check — an unresolvable job reference makes the gate unreachable, so `latest.json` goes missing exactly as if the gate had failed closed. Whenever a sync touches this job, check every lane the `if:` block names still has a `jobs:` entry. `--no-sign` suppressed updater signing too, so the `.app.tar.gz` shipped with no `.sig`; without ad-hoc signing the bundle had no signature at all and macOS called it damaged — see [Desktop auto-update](#desktop-auto-update-linux--windows--works). **`release-macos-unsigned` is a fork-added job, so upstream's sweeps across its own lanes never reach it.** When upstream added the `buzz-backend-kubernetes` sidecar to every non-Windows lane (#4289) this job kept the old list, and because `tauri.conf.json`'s `externalBin` is shared while `scripts/bundle-sidecars.sh` exits 1 on a missing binary, the fork's only `darwin-aarch64` lane would have failed — with no merge conflict anywhere. Re-check this job's sidecar list whenever upstream touches one of theirs. **Do not name the release-upload command anywhere in this file, even in a comment:** `scripts/test-release-ref-contract.sh` counts occurrences of that string and, since upstream #5398 moved rolling-manifest promotion out of this file, requires exactly **one** — it was two before the 2026-08-11 sync. `scripts/test-oss-desktop-promotion.sh` additionally asserts that the rolling-release upload does *not* appear here at all, so prose naming it fails two contracts, not one. See [Rolling-manifest promotion](#rolling-manifest-promotion-moved-upstream-and-the-fork-cannot-reach-it) |
 | `release.yml` + `macos-canary.yml` | `BUZZ_DESKTOP_BUILD_AUTO_CONNECT_DEFAULT_RELAY: "1"` on the build step of the three fork-runnable lanes and the canary | Skips the "Join or create a community" picker and auto-creates the single allowlisted community. This is **upstream's own opt-in**, for builds whose default relay is reviewed and fixed — no source change was needed. It works because release builds already default to `wss://relay.bitcoinmarkets.app` (`relay.rs` → `relay/allowlist.rs`) and `shouldAutoConnectDefaultRelay` accepts any non-loopback `ws(s)` URL. `option_env!`, so it is **compile-time**: absent at build time it silently does nothing. Deliberately not set on the two `block/buzz` macOS lanes, and irrelevant in debug builds where the loopback default correctly keeps the picker. Assert it with the `#[ignore]`d `compiled_flag_matches_expected` test and `BUZZ_TEST_EXPECTED_AUTO_CONNECT_DEFAULT_RELAY` |
 | `desktop/scripts/build-release-config.mjs` | `BUZZ_MACOS_ADHOC_SIGN=1` emits `bundle.macOS.signingIdentity: "-"` | Ad-hoc bundle signing for the one macOS lane nothing else signs. Opt-in and off by default, so the two `block/buzz` lanes still reach `block/apple-codesign-action` unsigned — setting it unconditionally would sign a bundle that is about to be re-signed. It has to be config rather than a post-build `codesign`, because Tauri builds the DMG in the same invocation |
 | `linux-canary.yml`, `windows-canary.yml` | `RELEASE_REPO` guard | Were pinned to `block/buzz` |
@@ -367,6 +367,36 @@ or any "Copy link" affordance that puts an entity link on the clipboard. Either 
 these OS links, and then the fork must emit the registered scheme exactly as
 `messageLink.ts` does. Check for both when a sync touches `entityLink.ts`,
 `entityLinks.tsx` or `deep_link.rs`.
+
+#### Both flip conditions fired in the 2026-08-16 sync — **decision pending**
+
+Upstream's Projects v3 (#5792) landed both at once, so the reasoning above no longer
+holds and the section is kept only as the record of why it once did:
+
+1. `deep_link.rs` gained `Some("repo" | "project" | "pr" | "issue")`, which calls
+   `parse_entity_deep_link`, activates the window and emits `deep-link-entity`. These
+   are now OS links by any definition.
+2. `ShareLinkButton.tsx` and `CopyShareLinkMenuItem.tsx` are new, and both put an
+   entity link on the clipboard from a **"Copy link"** control. They are wired into
+   `RepositoryCards`, `ProjectCards`, `ProjectsPullRequestsList`, `ProjectsIssuesList`,
+   `ProjectIssuesPanel`, `ProjectPullRequestsPanel` and `ProjectDetailChrome`.
+
+`entityLink.ts:21` still has `const ENTITY_LINK_SCHEME = "buzz:"` and its four
+builders still emit `buzz://…`, so in this fork **"Copy link" produces a link the OS
+will not route back to this app** — only `bitcoinmarkets` is registered. Pasted into a
+browser it opens upstream Buzz if installed, and nothing otherwise. In-app clicks are
+unaffected: `entityLinks.tsx` still `preventDefault()`s and routes internally, and
+`deep_link.rs` accepts both schemes inbound.
+
+The fix is the `messageLink.ts` idiom — a `FORK-LOCAL` scheme constant that the
+builders emit and the parser accepts alongside the legacy literal — but it is a
+deliberate behavioural change, not a merge resolution, so the sync that found it did
+not make it. **It also has a real cost the earlier reasoning named:** these links
+travel inside message content, so emitting `bitcoinmarkets://` stops upstream clients
+rendering preview cards for links this fork publishes. Point 2 above is still true;
+what changed is that point 1 is not, and a copied link that goes nowhere is the more
+visible breakage. `crates/buzz-cli/src/links.rs` builds the same links and would need
+the same treatment.
 
 ### Splitting state from upstream Buzz
 
@@ -692,7 +722,15 @@ All 12 alerts from the first CodeQL run were in files **byte-identical to
 upstream** — no fork-local code was implicated — and all are dismissed. Recorded
 here because dismissals key to an alert number: a sync that re-touches these
 files can raise the same finding under a new number, and without this table the
-analysis gets redone from scratch.
+analysis gets redone from scratch. Later rows are alerts a sync introduced;
+they are triaged here but **not** dismissed, so they may still be open.
+
+**Two families are open on `main` and are not in this table**, because they
+predate it and are not sync findings: 27 `rust/hard-coded-cryptographic-value` in
+`crates/buzz-paymaster` (fork-local, test vectors — worth a proper triage pass
+someday) and one `js/redos`. Check `?ref=refs/heads/main` before attributing an
+alert to a sync — a red `CodeQL` on a sync PR reports only what that PR *added*,
+but the alert list API returns the whole branch.
 
 | Rule | Where | Verdict |
 |------|-------|---------|
@@ -703,6 +741,7 @@ analysis gets redone from scratch.
 | `js/xss-through-dom` ×2 | `desktop/src/features/agents/ui/AgentCreationPreview.tsx:752,889` | Sink is `<img src>`, a passive context — `javascript:` URLs do not execute there and SVG loaded via `<img>` cannot run script. The value is the avatar URL the user typed into their own client. **False positive** |
 | `js/incomplete-multi-character-sanitization` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:35` | `htmlInlineToMarkdown` is a markdown normalizer, not a sanitizer. **False positive** |
 | `js/double-escaping` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:26` | **A real bug**, not exploitable. See below |
+| `js/incomplete-url-substring-sanitization` ×6 | `desktop/src/features/messages/ui/useComposerLinkPreviews.test.mjs:245,374,541,545,562,563` | Arrived in the 2026-08-16 sync and turned `CodeQL` red on the sync PR. Every hit is `assert.ok(tag?.includes("https://relay.example.com/media/…"))` — a **test assertion** that a serialised tag carries an expected URL, not a sanitiser and not a security decision. The rule looks for `url.includes("host")` guarding a trust boundary; there is no untrusted input here. File is byte-identical to `upstream/main`. **False positive** |
 
 The one genuine defect is `decodeHtmlEntities`, which decodes `&amp;` *before*
 `&lt;`, so `&amp;lt;` becomes a literal `<`. A README containing escaped HTML
@@ -871,6 +910,27 @@ Known-still-hardcoded upstream, not yet patched here: `helm-chart.yml` has a
 `GHCR_CHART_REPO` override but `push-gateway-helm-chart.yml` hardcodes
 `CHART_REPO` (`:20`), and `signed-macos-canary.yml:104` still carries the
 root-lockfile mesh-llm bug fixed in `ci.yml`.
+
+<!-- END FORK-LOCAL SECTION -->
+
+---
+
+## Product Contract
+
+Before planning or reviewing a non-trivial change:
+
+1. Read [VISION.md](VISION.md).
+2. Read the `VISION_*.md` documents relevant to the affected product surface.
+3. Read the applicable guidance in [TESTING.md](TESTING.md) and any
+   package-local `TESTING.md`.
+4. Check that the proposed design advances, or at least does not contradict,
+   that product intent. Call out any intentional tension explicitly.
+
+Implementation describes the product today; the vision documents describe the
+product it is becoming. A locally correct change can still be wrong if it works
+against that direction. Scale validation to the change's risk and exercise the
+real workflow for user-visible or integration behavior when practical; green CI
+and runtime evidence answer different questions.
 
 ---
 
