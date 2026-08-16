@@ -133,9 +133,9 @@ pub fn halt_height(current_height: u64) -> u64 {
 /// Height-based helper (not wall-clock): once the tip reaches
 /// `next_retarget - 24`, the wallet refuses new bets until after the retarget.
 ///
-/// Product path prefers [`betting_halted_by_remaining_blocks`] from the live
-/// mempool.space difficulty-adjustment signal; keep this for unit tests and as
-/// a fallback when only a tip height is available.
+/// Product path uses [`betting_halted_by_remaining_blocks`] from the live
+/// mempool.space difficulty-adjustment signal only. Keep this height helper for
+/// unit tests — do not use it as a live betting fallback when mempool is down.
 #[must_use]
 pub fn betting_halted(current_height: u64) -> bool {
     current_height >= halt_height(current_height)
