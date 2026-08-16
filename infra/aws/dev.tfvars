@@ -142,6 +142,46 @@ indexer_enabled       = false
 indexer_desired_count = 0
 # indexer_image = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<immutable>@sha256:<digest>"
 
+# ── AVNU proxy (buzz-avnu-proxy at paymaster.bitcoinmarkets.app) ─────────────
+# Disabled. avnu_proxy_enabled = false means **no ECS/IAM/secret/TG resources**
+# — same lesson as paymaster/indexer: half-adding IAM roles without bootstrap
+# PassRole breaks relay CD.
+#
+# This is NOT paymaster.tf (buzz-paymaster, egress-only Nostr/STRK sponsor).
+# Leave paymaster_enabled = false. Hostname paymaster.bitcoinmarkets.app is
+# product naming for the AVNU SNIP-29 proxy; clients set AVNU_PROXY_URL there
+# after the host is live (Wallet — not this PR).
+#
+# Image is var.relay_image (one CD pin covers relay + this proxy). Binary is
+# already in the relay image at /usr/local/bin/buzz-avnu-proxy. Do not invent
+# a second image variable that could un-pin CD.
+#
+# Secret buzz-dev/avnu-proxy already exists in AWS (AVNU_API_KEY +
+# PROXY_AUTH_TOKEN). Terraform creates the secret resource for IAM but never
+# manages a version — import on first enable.
+#
+# Turning it on, in this order (operator apply after merge — do NOT set
+# enabled=true in this PR):
+#
+#   1. terraform -chdir=infra/aws/bootstrap apply
+#      (PassRole on avnu-proxy roles + GetSecretValue Deny on buzz-dev/avnu-proxy)
+#   2. Set avnu_proxy_enabled = true, avnu_proxy_desired_count = 0
+#   3. terraform import the existing secret (look up live ARN; do not hardcode
+#      the random suffix — currently ends -d4y5BS but verify at apply time):
+#        aws secretsmanager describe-secret --profile alc --region eu-west-3 \
+#          --secret-id buzz-dev/avnu-proxy --query ARN --output text
+#        terraform import -var-file=dev.tfvars -var relay_image="$IMAGE" \
+#          'aws_secretsmanager_secret.avnu_proxy[0]' <ARN>
+#   4. Apply main stack (SG, IAM, TG, listener rule, Route53, service at 0)
+#   5. Set avnu_proxy_desired_count = 1 and apply again
+#   6. Wallet AVNU_PROXY_URL = https://paymaster.bitcoinmarkets.app
+#      (BIND_ADDR is 0.0.0.0:8788; PROXY_AUTH_TOKEN required off-loopback)
+#
+# ACM gains a paymaster.bitcoinmarkets.app SAN with this change (even while
+# off). Route53 A alias + ALB host-header rule appear only when enabled.
+avnu_proxy_enabled       = false
+avnu_proxy_desired_count = 0
+
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
 
