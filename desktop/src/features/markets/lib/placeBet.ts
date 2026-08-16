@@ -1,6 +1,8 @@
 /**
- * Bet path: prepare lognormal trade + prepend feeCall, then hand Call[] to
- * Tauri `place_bet`. No Lightning / Atomiq / invoice on this path.
+ * Bet path: reuse prepareTrade-style prep with targetMean = ln(D), then
+ * prepend strkBTC.transfer(feeRecipient, feeAmount) and ...trade.calls.
+ * No Lightning / Atomiq / invoice. No executeTrade(). No fee bump on
+ * approve / supplied_collateral.
  */
 
 import type { Call } from "starknet";
@@ -29,9 +31,11 @@ export type PlaceBetResult = {
   feeAmount: string;
 };
 
+/**
+ * `[feeTransfer, ...trade.calls]` — fee is a separate transfer only.
+ */
 export function buildBetCalls(prepared: PreparedLognormalTrade): Call[] {
   const feeCall = buildFeeCall(prepared.tokenAmount);
-  // fee first, then approve + execute_trade. Never mix LN here.
   return [feeCall, ...prepared.calls];
 }
 
@@ -39,6 +43,7 @@ export function buildBetCalls(prepared: PreparedLognormalTrade): Call[] {
  * Prepare and submit a curve bet. Signing stays in Rust via `place_bet`.
  */
 export async function placeBet(params: PlaceBetParams): Promise<PlaceBetResult> {
+  // prepareTrade({ targetMean: ln(D) }) equivalent for lognormal (same denoms).
   const prepared = prepareLognormalTrade({
     rawDifficulty: params.rawDifficulty,
     market: params.market,

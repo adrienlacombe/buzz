@@ -19,11 +19,11 @@
 //!                       Test:    https://sepolia.paymaster.avnu.fi
 //! BIND_ADDR             Listen address. Default: 0.0.0.0:8788
 //!
-//! INDEXER_URL           Required on listing clients (no client default).
-//!                       Never http://127.0.0.1:8787 — localhost is
-//!                       listing-proof only. Set a public host when ready
-//!                       (e.g. https://markets.bitcoinmarkets.app).
-//!                       GET {INDEXER_URL}/api/markets, GET {INDEXER_URL}/health.
+//! INDEXER_URL           Listing clients (desktop) default to
+//!                       http://127.0.0.1:8787 (Adrien's machine). Override
+//!                       for a public host. GET {INDEXER_URL}/api/markets,
+//!                       GET {INDEXER_URL}/health. Cloud agents must not
+//!                       live-fetch the default URL.
 //! ```
 
 use axum::{
@@ -38,11 +38,11 @@ use serde_json::Value;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 const DEFAULT_UPSTREAM: &str = "https://starknet.paymaster.avnu.fi";
 const DEFAULT_BIND: &str = "0.0.0.0:8788";
-const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
+const DEFAULT_INDEXER_URL: &str = "http://127.0.0.1:8787";
 
 #[derive(Clone)]
 struct AppState {
@@ -80,20 +80,13 @@ async fn main() -> Result<(), BootError> {
         .trim_end_matches('/')
         .to_string();
 
-    // Documented for operators; this proxy does not call the indexer.
-    // Listing clients must set INDEXER_URL themselves — never invent loopback.
+    // Proxy does not call the indexer. Listing clients default to Adrien's
+    // localhost indexer; cloud agents must not live-fetch that host.
     match std::env::var("INDEXER_URL") {
-        Ok(url) if url.contains("127.0.0.1") || url.contains("localhost") => {
-            warn!(
-                indexer_url = %url,
-                expected = PRODUCT_INDEXER_URL,
-                "INDEXER_URL points at loopback; localhost is listing-proof only — set a public host"
-            );
-        }
         Ok(url) => info!(indexer_url = %url, "INDEXER_URL set"),
         Err(_) => info!(
-            expected = PRODUCT_INDEXER_URL,
-            "INDEXER_URL unset on this process (listing clients require a public host; no localhost default)"
+            default = DEFAULT_INDEXER_URL,
+            "INDEXER_URL unset on this process (desktop default is Adrien localhost indexer)"
         ),
     }
 

@@ -18,6 +18,7 @@ import { bettingHalted } from "./lib/halt";
 import {
   fetchIndexerHealth,
   fetchIndexerMarkets,
+  findDifficultyMarket,
   resolveIndexerUrl,
   type IndexerMarket,
 } from "./lib/indexer";
@@ -54,10 +55,8 @@ export function MarketsScreen() {
         const base = resolveIndexerUrl();
         await fetchIndexerHealth(base);
         const markets = await fetchIndexerMarkets(base);
-        const found =
-          markets.find(
-            (m) => m.address.toLowerCase() === DIFFICULTY_MARKET.toLowerCase(),
-          ) ?? markets[0] ?? null;
+        // Indexer returns unpadded address (0x23b3…); match felt-normalized.
+        const found = findDifficultyMarket(markets, DIFFICULTY_MARKET);
         const tip = await fetchBitcoinHeight();
         if (cancelled) return;
         setIndexerHost(base);

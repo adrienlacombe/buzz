@@ -6,19 +6,31 @@
  */
 
 /**
- * Expected public indexer host for the `INDEXER_URL` env (set later / deploy).
- *
- * **Not a client default.** `INDEXER_URL` is required. Never ship
- * `http://127.0.0.1:8787` — localhost is listing-proof only; Adrien does not
- * want the indexer run locally for the product client.
+ * Default indexer for listing the v1 market: Adrien's machine localhost
+ * (same host, not sslip.io). Override with `VITE_INDEXER_URL` / `INDEXER_URL`.
+ * Cloud agents cannot reach this host — do not live-fetch it in CI/agent.
  */
-export const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
+export const DEFAULT_INDEXER_URL = "http://127.0.0.1:8787";
 
-/** Live LOGNORMAL difficulty market (raw difficulty axis). */
+/** @deprecated Use {@link DEFAULT_INDEXER_URL}. */
+export const PRODUCT_INDEXER_URL = DEFAULT_INDEXER_URL;
+
+/**
+ * Live LOGNORMAL difficulty market.
+ * Indexer may return the same address unpadded (`0x23b3…`); match via normalize.
+ */
 export const DIFFICULTY_MARKET =
   "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
 
+/** Unpadded form as returned by `GET {INDEXER_URL}/api/markets`. */
+export const DIFFICULTY_MARKET_UNPADDED =
+  "0x23b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
+
 export const MARKET_TITLE = "Bitcoin difficulty after next retarget";
+
+export const MARKET_TYPE = "lognormal";
+
+export const X_AXIS_LABEL = "Difficulty";
 
 export const FACTORY =
   "0x046b18bbc9b0de137e4f919100ee6b61bf37d345f8099ff7f982b7eaffcab62d";

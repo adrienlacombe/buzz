@@ -34,21 +34,39 @@ height (every 2016 blocks).
 
 ## INDEXER_URL
 
-**Required env** — no client default, and **never** `http://127.0.0.1:8787`.
-Localhost is listing-proof only; Adrien does not want the indexer run locally
-for the product client. Set a public host when ready:
+Configurable. Desktop default is Adrien's local indexer (same host, not
+sslip.io):
 
 ```text
-INDEXER_URL=https://markets.bitcoinmarkets.app
+INDEXER_URL=http://127.0.0.1:8787
 ```
+
+Override with `INDEXER_URL` / `VITE_INDEXER_URL` when a public host is ready.
 
 Listing/health on whatever host `INDEXER_URL` points at:
 
 - `GET {INDEXER_URL}/api/markets`
 - `GET {INDEXER_URL}/health`
 
-Desktop / Tauri refuse unset and loopback values (`VITE_INDEXER_URL` /
-`INDEXER_URL`). See `infra/aws/markets.tf.md`.
+v1 listing row (address may be unpadded):
+
+- `address`: `0x23b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8`
+- `title`: Bitcoin difficulty after next retarget
+- `marketType`: lognormal
+- `xAxisLabel`: Difficulty
+
+Cloud / CI agents cannot reach Adrien's localhost — do **not** live-fetch the
+default URL as a build dependency. See `infra/aws/markets.tf.md`.
+
+### prepareTrade (bet path)
+
+Reuse `prepareTrade({ targetMean })` semantics with `targetMean = ln(D)`.
+There is no SDK `prepareLognormalTrade`. Hints set both `l2_norm_denom` and
+`backing_denom` to cairo `isqrt(2*sigma*sqrt_pi)` (same limbs). Calls:
+
+`[strkBTC.transfer(feeRecipient, feeAmount), ...trade.calls]`
+
+No `executeTrade()`. Do not bump approve / `supplied_collateral` for the fee.
 
 ## AVNU_API_KEY
 

@@ -38,17 +38,17 @@ pub const RETARGET_INTERVAL: u64 = 2016;
 /// Halt betting this many blocks before the next retarget height.
 pub const HALT_BLOCKS_BEFORE_RETARGET: u64 = 24;
 
-/// Expected public indexer host for the `INDEXER_URL` env (set in deploy / later).
-///
-/// This constant is **documentation + tests only** — it is not a client default.
-/// `INDEXER_URL` is required. Never invent `http://127.0.0.1:8787` (loopback is
-/// listing-proof only; Adrien does not want the indexer run locally for the
-/// product client).
+/// Default indexer for listing the v1 market: Adrien's machine (`127.0.0.1:8787`,
+/// not sslip.io). Override with `INDEXER_URL`. Cloud / CI agents cannot reach
+/// that host — do not live-fetch the default URL as a build dependency.
 ///
 /// Listing endpoints on whatever host `INDEXER_URL` points at:
 /// - `GET {INDEXER_URL}/api/markets`
 /// - `GET {INDEXER_URL}/health`
-pub const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
+pub const DEFAULT_INDEXER_URL: &str = "http://127.0.0.1:8787";
+
+/// Alias kept for older call sites / docs.
+pub const PRODUCT_INDEXER_URL: &str = DEFAULT_INDEXER_URL;
 
 /// Keyring entry name for the human identity nsec.
 pub const HUMAN_IDENTITY_KEYRING_NAME: &str = "identity";
@@ -62,18 +62,6 @@ pub enum MarketsError {
     /// A keyring name was empty or malformed.
     #[error("invalid keyring name: {0}")]
     InvalidKeyringName(String),
-    /// `INDEXER_URL` was missing or empty.
-    #[error(
-        "INDEXER_URL is required (public host; no localhost default — \
-         do not use http://127.0.0.1:8787)"
-    )]
-    IndexerUrlMissing,
-    /// `INDEXER_URL` pointed at loopback; public host required.
-    #[error(
-        "INDEXER_URL must not be loopback; localhost is listing-proof only. \
-         Set a public host (e.g. https://markets.bitcoinmarkets.app)"
-    )]
-    IndexerUrlLoopback,
 }
 
 /// Computes the wallet fee for a trade collateral amount.
@@ -154,23 +142,18 @@ pub fn is_human_keyring_name(name: &str) -> bool {
 
 /// Resolve the markets indexer base URL from `INDEXER_URL`.
 ///
-/// Required env — no client default. Never invents `http://127.0.0.1:8787`.
-/// Localhost is listing-proof only. Set a public host when ready.
-pub fn resolve_indexer_url() -> Result<String, MarketsError> {
+/// Configurable; defaults to [`DEFAULT_INDEXER_URL`] (`http://127.0.0.1:8787`).
+pub fn resolve_indexer_url() -> String {
     resolve_indexer_url_from(std::env::var("INDEXER_URL").ok().as_deref())
 }
 
 /// Resolve from an optional raw env value (tests / callers that already read env).
-pub fn resolve_indexer_url_from(raw: Option<&str>) -> Result<String, MarketsError> {
-    let chosen = raw.map(str::trim).filter(|s| !s.is_empty());
-    let Some(chosen) = chosen else {
-        return Err(MarketsError::IndexerUrlMissing);
-    };
-    let base = chosen.trim_end_matches('/');
-    if base.contains("127.0.0.1") || base.to_ascii_lowercase().contains("localhost") {
-        return Err(MarketsError::IndexerUrlLoopback);
-    }
-    Ok(base.to_string())
+pub fn resolve_indexer_url_from(raw: Option<&str>) -> String {
+    let chosen = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_INDEXER_URL);
+    chosen.trim_end_matches('/').to_string()
 }
 
 #[cfg(test)]
@@ -250,30 +233,18 @@ mod tests {
     }
 
     #[test]
-    fn indexer_url_is_required_and_never_loopback() {
-        assert!(PRODUCT_INDEXER_URL.starts_with("https://"));
-        assert!(!PRODUCT_INDEXER_URL.contains("127.0.0.1"));
-        assert!(!PRODUCT_INDEXER_URL.contains("localhost"));
-        assert_eq!(PRODUCT_INDEXER_URL, "https://markets.bitcoinmarkets.app");
+    fn indexer_url_defaults_to_adrien_localhost() {
+        assert_eq!(DEFAULT_INDEXER_URL, "http://127.0.0.1:8787");
+        assert_eq!(PRODUCT_INDEXER_URL, DEFAULT_INDEXER_URL);
+        assert_eq!(resolve_indexer_url_from(None), DEFAULT_INDEXER_URL);
+        assert_eq!(resolve_indexer_url_from(Some("")), DEFAULT_INDEXER_URL);
         assert_eq!(
-            resolve_indexer_url_from(None),
-            Err(MarketsError::IndexerUrlMissing)
+            resolve_indexer_url_from(Some("http://127.0.0.1:8787/")),
+            "http://127.0.0.1:8787"
         );
         assert_eq!(
-            resolve_indexer_url_from(Some("")),
-            Err(MarketsError::IndexerUrlMissing)
-        );
-        assert_eq!(
-            resolve_indexer_url_from(Some("https://markets.bitcoinmarkets.app/")).unwrap(),
+            resolve_indexer_url_from(Some("https://markets.bitcoinmarkets.app/")),
             "https://markets.bitcoinmarkets.app"
-        );
-        assert_eq!(
-            resolve_indexer_url_from(Some("http://127.0.0.1:8787")),
-            Err(MarketsError::IndexerUrlLoopback)
-        );
-        assert_eq!(
-            resolve_indexer_url_from(Some("http://localhost:8787")),
-            Err(MarketsError::IndexerUrlLoopback)
         );
     }
 }

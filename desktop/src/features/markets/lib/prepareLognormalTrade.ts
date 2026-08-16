@@ -1,16 +1,18 @@
 /**
  * Lognormal prepare path for the Bitcoin difficulty market.
  *
- * There is NO prepareLognormalTrade in @the-situation/sdk — only the
- * normal-family prepareTrade. We therefore:
- *   1. Treat the UI axis as raw difficulty D
- *   2. Plan with targetMean = ln(D) in log-space
- *   3. Build hints where BOTH denoms = isqrt(2*σ*√π) (same limbs)
- *   4. Encode execute_trade against LOGNORMAL_AMM_ABI (candidate.mu, not mean)
- *   5. Return calls = [approve(+5%), trade] — caller prepends feeCall
+ * There is NO `prepareLognormalTrade` in `@the-situation/sdk` — only the
+ * normal-family `prepareTrade({ targetMean })`. We reuse that contract:
+ *   1. UI axis is raw difficulty `D`
+ *   2. `targetMean = ln(D)`
+ *   3. Hints: both `l2_norm_denom` and `backing_denom` = cairo
+ *      `isqrt(2*sigma*sqrt_pi)` (identical limbs)
+ *   4. Encode `execute_trade` (LOGNORMAL ABI uses `candidate.mu`)
+ *   5. Return `calls = [approve(+5%), trade]` — caller prepends
+ *      `strkBTC.transfer(feeRecipient, feeAmount)` then `...trade.calls`
  *
- * Do NOT call SDK executeTrade(). Do NOT bump approve/supplied_collateral for
- * the wallet fee.
+ * Do NOT call SDK `executeTrade()`. Do NOT bump approve /
+ * `supplied_collateral` for the wallet fee.
  */
 
 import { LOGNORMAL_AMM_ABI } from "@the-situation/artifacts";

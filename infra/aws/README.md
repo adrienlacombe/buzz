@@ -309,12 +309,11 @@ This is a **configuration lock, not a security boundary.** It stops the shipped
 app from talking to another relay. It cannot stop someone who rebuilds the client
 or points `buzz-cli` at a different relay.
 
-**Markets indexer host.** `INDEXER_URL` is a **required env** with no client
-default — do not ship `http://127.0.0.1:8787`. Localhost is listing-proof only;
-the product client is not meant to run the indexer locally. Set a public host
-when ready (expected `https://markets.bitcoinmarkets.app`). Listing/health:
-`GET {INDEXER_URL}/api/markets` and `GET {INDEXER_URL}/health`. Markets is
-adding the service under `infra/aws`; see `markets.tf.md`.
+**Markets indexer host.** Desktop defaults `INDEXER_URL` to
+`http://127.0.0.1:8787` (Adrien's machine, not sslip.io). Override for a
+public host when ready. Listing/health: `GET {INDEXER_URL}/api/markets` and
+`GET {INDEXER_URL}/health`. Cloud / CI agents cannot reach that localhost —
+do not live-fetch the default URL. See `markets.tf.md`.
 
 **Who may use our relay — `require_relay_membership`.** Set it `true` in
 `dev.tfvars` and only pubkeys in the relay's membership table may use the relay;

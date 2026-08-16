@@ -4,7 +4,11 @@ import { describe, it } from "node:test";
 const WALLET_FEE_BPS = 10n;
 const RETARGET_INTERVAL = 2016;
 const HALT_BLOCKS_BEFORE_RETARGET = 24;
-const EXPECTED_PUBLIC_INDEXER_URL = "https://markets.bitcoinmarkets.app";
+const DEFAULT_INDEXER_URL = "http://127.0.0.1:8787";
+const DIFFICULTY_MARKET =
+  "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
+const DIFFICULTY_MARKET_UNPADDED =
+  "0x23b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
 
 function walletFeeAmount(tokenAmount) {
   if (tokenAmount <= 0n) return 0n;
@@ -26,19 +30,25 @@ function bettingHalted(currentHeight) {
 
 function resolveIndexerUrl(env = {}) {
   const raw =
-    (env.VITE_INDEXER_URL || "").trim() || (env.INDEXER_URL || "").trim();
-  if (!raw) {
-    throw new Error(
-      "INDEXER_URL is required (public host; no localhost default — do not use http://127.0.0.1:8787)",
-    );
-  }
-  const base = raw.replace(/\/$/, "");
-  if (/127\.0\.0\.1|localhost/i.test(base)) {
-    throw new Error(
-      "INDEXER_URL must not be loopback; localhost is listing-proof only",
-    );
-  }
-  return base;
+    (env.VITE_INDEXER_URL || "").trim() ||
+    (env.INDEXER_URL || "").trim() ||
+    DEFAULT_INDEXER_URL;
+  return raw.replace(/\/$/, "");
+}
+
+function normalizeMarketAddress(address) {
+  const hex = address.trim().toLowerCase().replace(/^0x/, "");
+  const stripped = hex.replace(/^0+/, "") || "0";
+  return `0x${stripped}`;
+}
+
+function findDifficultyMarket(markets, difficultyMarketAddress) {
+  const want = normalizeMarketAddress(difficultyMarketAddress);
+  return (
+    markets.find((m) => normalizeMarketAddress(m.address) === want) ??
+    markets[0] ??
+    null
+  );
 }
 
 describe("walletFeeAmount", () => {
@@ -78,22 +88,35 @@ describe("betting halt at height", () => {
 });
 
 describe("INDEXER_URL", () => {
-  it("is required, accepts public host, refuses loopback default", () => {
-    assert.equal(EXPECTED_PUBLIC_INDEXER_URL, "https://markets.bitcoinmarkets.app");
-    assert.throws(() => resolveIndexerUrl({}), /INDEXER_URL is required/);
+  it("defaults to Adrien localhost indexer (configurable)", () => {
+    assert.equal(DEFAULT_INDEXER_URL, "http://127.0.0.1:8787");
+    assert.equal(resolveIndexerUrl({}), DEFAULT_INDEXER_URL);
+    assert.equal(
+      resolveIndexerUrl({ INDEXER_URL: "http://127.0.0.1:8787/" }),
+      "http://127.0.0.1:8787",
+    );
     assert.equal(
       resolveIndexerUrl({
-        INDEXER_URL: "https://markets.bitcoinmarkets.app/",
+        VITE_INDEXER_URL: "https://markets.bitcoinmarkets.app/",
       }),
       "https://markets.bitcoinmarkets.app",
     );
-    assert.throws(
-      () => resolveIndexerUrl({ INDEXER_URL: "http://127.0.0.1:8787" }),
-      /must not be loopback/,
+  });
+
+  it("matches unpadded indexer listing address to padded constant", () => {
+    const listing = {
+      address: DIFFICULTY_MARKET_UNPADDED,
+      title: "Bitcoin difficulty after next retarget",
+      marketType: "lognormal",
+      xAxisLabel: "Difficulty",
+    };
+    assert.equal(
+      normalizeMarketAddress(DIFFICULTY_MARKET),
+      normalizeMarketAddress(DIFFICULTY_MARKET_UNPADDED),
     );
-    assert.throws(
-      () => resolveIndexerUrl({ INDEXER_URL: "http://localhost:8787" }),
-      /must not be loopback/,
-    );
+    const found = findDifficultyMarket([listing], DIFFICULTY_MARKET);
+    assert.equal(found?.address, DIFFICULTY_MARKET_UNPADDED);
+    assert.equal(found?.marketType, "lognormal");
+    assert.equal(found?.xAxisLabel, "Difficulty");
   });
 });

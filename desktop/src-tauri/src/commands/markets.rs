@@ -252,7 +252,7 @@ pub async fn fund_lightning(
         class_hash: NOSTR_ACCOUNT_CLASS_HASH.to_string(),
         constructor_calldata: ctor.iter().map(|f| f.to_fixed_hex_string()).collect(),
         salt: DEPLOY_SALT.to_fixed_hex_string(),
-        indexer_url: resolve_indexer_url().map_err(|e| e.to_string())?,
+        indexer_url: resolve_indexer_url(),
     })
 }
 
