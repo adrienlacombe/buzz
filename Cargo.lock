@@ -987,6 +987,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-avnu-proxy"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "buzz-backend-kubernetes"
 version = "0.1.0"
 dependencies = [

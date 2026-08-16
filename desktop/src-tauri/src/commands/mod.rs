@@ -26,6 +26,7 @@ mod join_policy;
 mod legacy_storage;
 mod link_preview;
 mod managed_agent_definition;
+pub(crate) mod markets;
 pub(crate) mod media;
 mod media_animated;
 mod media_download;
@@ -91,6 +92,9 @@ pub use identity_archive::*;
 pub use join_policy::*;
 pub use legacy_storage::*;
 pub use link_preview::*;
+pub use markets::{
+    bitcoin_wallet_address, difficulty_halt_status, fund_lightning, markets_indexer_url, place_bet,
+};
 pub use media::*;
 pub use media_download::*;
 pub use media_raw::*;

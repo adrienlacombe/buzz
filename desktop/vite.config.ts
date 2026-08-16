@@ -28,6 +28,10 @@ export default defineConfig(async () => ({
     },
   },
 
+  // Expose documented INDEXER_URL (not only VITE_INDEXER_URL) so the Vite
+  // client does not silently ignore INDEXER_URL=… at build time.
+  envPrefix: ["VITE_", "INDEXER_"],
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

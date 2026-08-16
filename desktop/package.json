@@ -25,6 +25,8 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@atomiqlabs/chain-starknet": "^8.6.0",
+    "@atomiqlabs/sdk": "^8.9.6",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -55,6 +57,10 @@
     "@tauri-apps/plugin-opener": "~2.5",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.0",
+    "@the-situation/artifacts": "0.15.0",
+    "@the-situation/collateral": "0.12.1",
+    "@the-situation/core": "0.12.0",
+    "@the-situation/utils": "0.13.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-link": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",
@@ -79,6 +85,7 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^4.0.2",
     "sonner": "^2.0.7",
+    "starknet": "^9.2.1",
     "tailwind-merge": "^3.5.0",
     "tiptap-markdown": "^0.9.0",
     "upng-js": "^2.1.0",

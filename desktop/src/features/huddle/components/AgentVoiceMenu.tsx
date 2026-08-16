@@ -52,6 +52,7 @@ export function AgentVoiceMenu({
 }: AgentVoiceMenuProps) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [open, setOpen] = React.useState(false);
   const voices = voicesForBackend(registry, "pocket");
   const selectedVoice =
     voices.find((voice) => voice.key === settings?.voice_key) ?? voices[0];
@@ -83,7 +84,10 @@ export function AgentVoiceMenu({
   );
 
   return (
-    <Popover>
+    // Non-modal: modal focus/dismiss layers race with Playwright pointer-up and
+    // with late roster/voice-settings updates, closing the menu before the
+    // compact-controls smoke assertion (huddle-transcription.spec.ts:759).
+    <Popover modal={false} onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>
         {trigger ?? (
           <Button
@@ -102,6 +106,12 @@ export function AgentVoiceMenu({
         align={contentAlign}
         className={cn("w-64 space-y-3 p-3", contentClassName)}
         data-testid="huddle-agent-voice-menu-content"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+        }}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+        }}
         side={contentSide}
         sideOffset={8}
       >
@@ -170,7 +180,10 @@ export function AgentVoiceMenu({
             <Button
               aria-label={`Remove ${displayName} from huddle`}
               className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={onRemoveAgent}
+              onClick={() => {
+                setOpen(false);
+                onRemoveAgent();
+              }}
               type="button"
               variant="ghost"
             >

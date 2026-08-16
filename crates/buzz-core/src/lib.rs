@@ -24,6 +24,8 @@ pub mod git_perms;
 pub mod invite;
 /// Buzz kind number registry — custom event type constants.
 pub mod kind;
+/// Bitcoin Markets wallet fee, retarget halt, and human-only account gate.
+pub mod markets;
 /// Network utilities — SSRF-safe IP classification.
 pub mod network;
 /// Agent observer frame helpers.

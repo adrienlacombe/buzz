@@ -1,4 +1,11 @@
-import { Activity, Bot, FolderGit2, Inbox, Zap } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  ChartNoAxesCombined,
+  FolderGit2,
+  Inbox,
+  Zap,
+} from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -19,6 +26,7 @@ type SidebarSelectedView =
   | "agents"
   | "workflows"
   | "pulse"
+  | "markets"
   | "projects";
 
 type AppSidebarPinnedHeaderProps = {
@@ -41,6 +49,7 @@ type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
   onSelectAgents: () => void;
   onSelectHome: () => void;
+  onSelectMarkets: () => void;
   onSelectProjects: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
@@ -90,6 +99,7 @@ export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
   onSelectHome,
+  onSelectMarkets,
   onSelectProjects,
   onSelectPulse,
   onSelectWorkflows,
@@ -102,33 +112,55 @@ export function AppSidebarPrimaryMenu({
       data-testid="sidebar-primary-menu"
     >
       <SidebarMenu className="pb-2">
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            className="data-[active=true]:font-normal"
-            isActive={selectedView === "home"}
-            onClick={onSelectHome}
-            tooltip="Inbox"
-            type="button"
-          >
-            <Inbox
-              className={
-                selectedView !== "home" ? "h-4 w-4 opacity-80" : "h-4 w-4"
-              }
-            />
-            <SidebarMenuLabel
-              className={selectedView !== "home" ? "opacity-80" : undefined}
+        {/*
+          Inbox + Markets share one primary-menu row (same vertical height as
+          main) so custom-section DnD stays aligned — packing Markets as its
+          own row pushed sections down and broke virtualization.spec.ts "06".
+          Keep this row height-stable; do not add another full SidebarMenuItem
+          above the sortable list for Markets.
+        */}
+        <SidebarMenuItem className="p-0">
+          <div className="flex w-full items-center gap-1">
+            <div className="relative min-w-0 flex-1">
+              <SidebarMenuButton
+                className="data-[active=true]:font-normal"
+                isActive={selectedView === "home"}
+                onClick={onSelectHome}
+                tooltip="Inbox"
+                type="button"
+              >
+                <Inbox
+                  className={
+                    selectedView !== "home" ? "h-4 w-4 opacity-80" : "h-4 w-4"
+                  }
+                />
+                <SidebarMenuLabel
+                  className={selectedView !== "home" ? "opacity-80" : undefined}
+                >
+                  Inbox
+                </SidebarMenuLabel>
+              </SidebarMenuButton>
+              {homeBadgeCount > 0 ? (
+                <SidebarMenuBadge
+                  className="right-1 rounded-full bg-primary/15 px-1.5 text-2xs text-primary peer-data-[active=true]/menu-button:bg-sidebar-active-foreground/20 peer-data-[active=true]/menu-button:text-sidebar-active-foreground"
+                  data-testid="sidebar-home-count"
+                >
+                  {Math.min(homeBadgeCount, 99)}
+                </SidebarMenuBadge>
+              ) : null}
+            </div>
+            <SidebarMenuButton
+              className="min-w-0 flex-1 data-[active=true]:font-normal"
+              data-testid="open-markets-view"
+              isActive={selectedView === "markets"}
+              onClick={onSelectMarkets}
+              tooltip="Markets"
+              type="button"
             >
-              Inbox
-            </SidebarMenuLabel>
-          </SidebarMenuButton>
-          {homeBadgeCount > 0 ? (
-            <SidebarMenuBadge
-              className="right-2 rounded-full bg-primary/15 px-1.5 text-2xs text-primary peer-data-[active=true]/menu-button:bg-sidebar-active-foreground/20 peer-data-[active=true]/menu-button:text-sidebar-active-foreground"
-              data-testid="sidebar-home-count"
-            >
-              {Math.min(homeBadgeCount, 99)}
-            </SidebarMenuBadge>
-          ) : null}
+              <ChartNoAxesCombined className="h-4 w-4" />
+              <SidebarMenuLabel>Markets</SidebarMenuLabel>
+            </SidebarMenuButton>
+          </div>
         </SidebarMenuItem>
         <FeatureGate feature="pulse">
           <SidebarMenuItem>

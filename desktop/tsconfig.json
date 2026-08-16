@@ -18,6 +18,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Do not auto-include ambient @types/* (e.g. @types/node via Atomiq).
+       Package imports still resolve their own types; vite/client comes from
+       src/vite-env.d.ts. Keeps DOM setTimeout as number. */
+    "types": [],
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

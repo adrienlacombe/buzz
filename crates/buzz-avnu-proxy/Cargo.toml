@@ -1,0 +1,22 @@
+[package]
+name = "buzz-avnu-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Server-side AVNU SNIP-29 paymaster proxy (API key stays off the client)"
+
+[[bin]]
+name = "buzz-avnu-proxy"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }

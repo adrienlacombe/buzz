@@ -19,6 +19,7 @@ members = [
     "crates/buzz-workflow",
     "crates/buzz-media",
     "crates/buzz-paymaster",
+    "crates/buzz-avnu-proxy",
     "crates/buzz-cli",
     "crates/buzz-pairing-cli",
     "crates/buzz-sdk",

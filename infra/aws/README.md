@@ -445,6 +445,11 @@ This is a **configuration lock, not a security boundary.** It stops the shipped
 app from talking to another relay. It cannot stop someone who rebuilds the client
 or points `buzz-cli` at a different relay.
 
+**Markets indexer.** Product `INDEXER_URL=https://markets.bitcoinmarkets.app`
+(required env or that public host). **No localhost default** — loopback was
+listing-proof only. Listing/health need no auth. Never commit `ADMIN_API_KEY`
+or `AVNU_API_KEY`. See `markets.tf.md`.
+
 **Who may use our relay — `require_relay_membership`.** Set it `true` in
 `dev.tfvars` and only pubkeys in the relay's membership table may use the relay;
 NIP-42 authentication alone is not enough. The owner is bootstrapped as a member
