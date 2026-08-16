@@ -53,6 +53,11 @@ output "indexer_url" {
   value       = var.indexer_enabled ? local.indexer_url : null
 }
 
+output "indexer_ecr_repository_url" {
+  description = "ECR repository URL for the markets indexer image (buzz-dev-indexer). Always present; pin indexer_image to <url>:<tag>@sha256:<digest> after the SDK push."
+  value       = aws_ecr_repository.indexer.repository_url
+}
+
 output "indexer_secret_id" {
   description = "Secret holding ADMIN_API_KEY / VOYAGER_API_KEY. Null while indexer_enabled is false. Terraform never writes values here."
   value       = var.indexer_enabled ? aws_secretsmanager_secret.indexer[0].name : null

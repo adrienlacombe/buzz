@@ -11,7 +11,7 @@
 #
 # ── Two properties worth understanding before changing anything here ──────────
 #
-# 1. OFF MEANS NO RESOURCES ON CREATE. Every resource in this file is gated on
+# 1. OFF MEANS NO RESOURCES ON CREATE. Every resource in *this* file is gated on
 #    `count = var.indexer_enabled ? 1 : 0`. That distinction was learned the hard
 #    way on paymaster.tf: creating IAM roles while desired_count sat at 0 still
 #    broke the next CI relay deploy with iam:PassRole, because bootstrap/ had not
@@ -20,11 +20,23 @@
 #    indexer EFS exists, flipping enabled back to false is not a silent teardown
 #    (see indexer_enabled description / prevent_destroy below).
 #
+#    The ECR repository is the deliberate exception: it lives in ecr.tf and is
+#    always created so the-situation-sdk can push before ECS exists. An ECR repo
+#    creates no PassRole surface, so it cannot break relay CD.
+#
 # 2. HTTP INGRESS, UNLIKE PAYMASTER. The indexer is a public HTTPS API. Its
 #    security group allows ingress from the ALB on port 8787 only. Host-header
 #    routing on the shared HTTPS listener forwards Host markets.<domain> here;
 #    the listener's default action stays the relay. Do not point the default
 #    action or the relay /_readiness health check at this service.
+#
+# 3. IMAGE FROM ECR, NOT GHCR. Anonymous GHCR pull of the private
+#    the-situation-sdk/indexer package is 401. Fine-grained PATs cannot do GitHub
+#    Packages; we will not mint a classic PAT or a buzz-dev/indexer-ghcr pull
+#    secret. Pin indexer_image to the ECR URI@digest after the SDK workflow
+#    pushes (role arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push).
+#    ECS pulls with AmazonECSTaskExecutionRolePolicy alone — no
+#    repositoryCredentials.
 
 # ── Variables ────────────────────────────────────────────────────────────────
 
@@ -34,6 +46,7 @@ variable "indexer_enabled" {
 
     Gates every resource in this file, not just how many tasks run. Off means no
     resources on the *create* path — see property 1 at the top of this file.
+    (The ECR repository in ecr.tf is always present so images can land first.)
 
     Once enabled, setting indexer_enabled = false will fail plan because
     aws_efs_file_system.indexer carries lifecycle.prevent_destroy. That is
@@ -46,17 +59,25 @@ variable "indexer_enabled" {
     orphaned in AWS until deleted by hand). This is not a silent destroy of an
     existing DB.
 
-    Turning it on is a two-step, in this order:
+    Turning it on, in this order (do not enable until an ECR pin exists):
 
-      1. Apply `bootstrap/` — it grants iam:PassRole on the two roles below and
-         extends the GetSecretValue Deny to the indexer secret. Separate state,
-         so CI never applies it:
+      1. Apply `bootstrap/` — creates buzz-dev-indexer-ecr-push (SDK OIDC push),
+         grants iam:PassRole on the two indexer roles below, and extends the
+         GetSecretValue Deny to the indexer secret. Separate state; CI never
+         applies it. Prefer --profile alc for AWS CLI; terraform aws_profile
+         in committed tfvars stays alc-tf:
            terraform -chdir=infra/aws/bootstrap apply
-      2. Set indexer_enabled = true here, plus an immutable indexer_image, and
-         populate the unmanaged secret (command below).
+      2. Main stack already creates aws_ecr_repository.indexer (even while this
+         flag is false). After merge/apply, the-situation-sdk workflow on main
+         pushes to ECR assuming
+         arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push.
+      3. Set indexer_image to the ECR URI@digest from that push, then
+         indexer_enabled = true with indexer_desired_count = 0, and populate
+         the unmanaged secret (command below).
 
-    Doing (2) before (1) reproduces the paymaster PassRole failure on the next
-    relay CD apply.
+    Doing (3) before (1) reproduces the paymaster PassRole failure on the next
+    relay CD apply. Doing (3) before an ECR image exists leaves ECS unable to
+    pull — there is no GHCR fallback and no pull secret.
   EOT
   type        = bool
   default     = false
@@ -74,19 +95,22 @@ variable "indexer_image" {
     Deliberately rejects mutable :main / :latest tags — same rule as
     relay_image — so a local apply cannot quietly un-pin what is running.
 
-    First published pin (also tagged :sha-94279a1):
+    Pin from Amazon ECR after the first successful SDK → ECR push (tag
+    immutability + digest). Enable waits on this form — do not use GHCR:
 
-      indexer_image = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+      indexer_image = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<immutable>@sha256:<digest>"
 
-    After the first push, make the GHCR package public (Packages → Change
-    visibility) so ECS can pull without a registry secret.
+    Historical GHCR note only (private package; anonymous pull 401; not an
+    enable pin): ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596
+    Do not make that package public. Do not mint a classic PAT. Do not add
+    repositoryCredentials or buzz-dev/indexer-ghcr.
   EOT
   type        = string
   default     = ""
 
   validation {
     condition     = var.indexer_image == "" || !can(regex(":(main|latest)$", var.indexer_image))
-    error_message = "indexer_image must not use a mutable tag (:main, :latest) — pass an immutable tag@digest (e.g. :0.19.1@sha256:…). Leave empty while indexer_enabled is false."
+    error_message = "indexer_image must not use a mutable tag (:main, :latest) — pass an immutable ECR tag@digest (e.g. 618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<tag>@sha256:…). Leave empty while indexer_enabled is false."
   }
 }
 
@@ -291,10 +315,11 @@ resource "aws_efs_access_point" "indexer" {
 # every refresh would force the CI deploy role to hold GetSecretValue on the
 # admin key. Leaving it unmanaged lets bootstrap/oidc.tf Deny that action.
 #
-# Populate it out-of-band, once (keys shown; never commit values):
+# Populate it out-of-band, once (keys shown; never commit values). Prefer
+# --profile alc for operator CLI; committed terraform aws_profile stays alc-tf:
 #
 #   aws secretsmanager put-secret-value \
-#     --profile alc-tf --region eu-west-3 \
+#     --profile alc --region eu-west-3 \
 #     --secret-id "buzz-dev/indexer" \
 #     --secret-string '{
 #       "ADMIN_API_KEY": "<generate and keep offline>",
