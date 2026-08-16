@@ -103,6 +103,40 @@ paymaster_enabled       = false
 paymaster_desired_count = 0
 # paymaster_account_class_hash = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537"
 
+# ── Markets indexer (@the-situation/indexer) ─────────────────────────────────
+# Disabled. indexer_enabled = false means **no resources on the create path** —
+# same lesson as paymaster: half-adding IAM roles without bootstrap PassRole
+# breaks relay CD.
+#
+# Once enabled, setting indexer_enabled = false fails plan (EFS prevent_destroy)
+# so CD cannot wipe the markets SQLite. That is intentional. To disable after
+# enable: terraform state rm 'aws_efs_file_system.indexer[0]' first (and accept
+# losing the count-gated resources). Not a silent destroy of an existing DB.
+#
+# After the first GHCR push, make ghcr.io/adrienlacombe/the-situation-sdk/indexer
+# public (Packages → Change visibility) so ECS can pull without a registry secret.
+#
+# Turning it on, in this order (Adrien applies AWS after the PR merges):
+#
+#   1. terraform -chdir=infra/aws/bootstrap apply
+#      (PassRole on indexer roles + GetSecretValue Deny on buzz-dev/indexer)
+#   2. Set indexer_enabled = true, indexer_desired_count = 0, and an immutable
+#      indexer_image pin (creates secret/roles/TG without starting a task):
+#        indexer_image = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+#      (also tagged :sha-94279a1). Rejects :main / :latest. Do NOT reuse relay_image.
+#   3. put-secret-value ADMIN_API_KEY + VOYAGER_API_KEY (keys only in docs —
+#      see indexer.tf / README). Never commit values.
+#   4. Set indexer_desired_count = 1 and apply again (indexer service does NOT
+#      ignore_changes desired_count — unlike paymaster — so this apply works).
+#   5. POST /admin/markets for the v1 market (payload in README).
+#   6. Wallet INDEXER_URL = https://markets.bitcoinmarkets.app
+#
+# ACM already gains a markets.bitcoinmarkets.app SAN with this PR (shared cert).
+# Route53 A alias + ALB host-header rule appear only when enabled.
+indexer_enabled       = false
+indexer_desired_count = 0
+# indexer_image = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
 

@@ -48,14 +48,15 @@ RDS subnet group requires ≥2. "Single-AZ" refers to the RDS and Redis instance
 | `s3.tf` | Media bucket + the relay's scoped IAM user |
 | `efs.tf` | Git volume + access point |
 | `secrets.tf` | Secrets Manager: `runtime` and `relay-identity` |
-| `alb.tf` | ALB, target group, listeners |
-| `dns.tf` | ACM cert, validation records, alias record (conditional) |
+| `alb.tf` | ALB, relay target group, listeners (default action = relay) |
+| `dns.tf` | ACM cert (relay + markets SAN), validation records, alias records |
 | `ecs.tf` | Cluster, IAM roles, task definition, service |
 | `paymaster.tf` | **Whole** `buzz-paymaster` service — its own SG, IAM roles and secret. Off by default |
-| `oidc.tf` | GitHub Actions deploy role (OIDC, no stored keys) |
+| `indexer.tf` | **Whole** markets indexer (`@the-situation/indexer`) — own SG, IAM, secret, EFS, TG, host-header rule. Off by default |
+| `oidc.tf` | GitHub Actions deploy role (OIDC, no stored keys) — lives under `bootstrap/` |
 | `outputs.tf` | URLs, endpoints, next-step commands |
 | `dev.tfvars` | **Committed** config for the dev environment (no secrets) |
-| `bootstrap/` | Creates the S3 state bucket (own local state) |
+| `bootstrap/` | Creates the S3 state bucket + OIDC deploy role (own local state) |
 
 ## Deploy
 
@@ -137,6 +138,10 @@ Its *real* cost is on chain, not here: every sponsored transaction pays ~0.78 ST
 of BIP-340 verification, and that does not amortise. See
 [`contracts/DEPLOYMENTS.md`](../../contracts/DEPLOYMENTS.md).
 
+Enabling the markets indexer adds another Fargate task (same size by default) plus
+its own EFS volume for SQLite — roughly another ~$10–12/mo on the Fargate side,
+and no shared Postgres.
+
 ## Sponsorship (`buzz-paymaster`)
 
 Off by default and safe to ignore until you want it. `paymaster_enabled = false`
@@ -196,6 +201,104 @@ it.
 It is a spending guard, not a per-member quota — there deliberately is no quota, and
 what stands in its place is that the sponsor estimates every transaction before
 sending, so anything that would revert is refused for free.
+
+## Markets indexer (`@the-situation/indexer`)
+
+Off by default and safe to ignore until you want it. `indexer_enabled = false`
+means **no resources on the create path**, same count-gating lesson as paymaster.
+
+Once enabled, setting `indexer_enabled = false` will **fail plan** because the
+indexer EFS carries `lifecycle.prevent_destroy`. That is intentional so CD cannot
+wipe the markets SQLite. To disable after enable you must first
+`terraform state rm 'aws_efs_file_system.indexer[0]'` (and accept losing the
+count-gated resources). "Off means no resources" is not a silent destroy of an
+existing DB. The indexer secret uses a 7-day recovery window for the same reason.
+
+This is **not** the relay. The container is `@the-situation/indexer` (npm 0.19.1);
+`indexer_image` is a separate variable and must not reuse `relay_image`. Mutable
+`:main` / `:latest` tags are rejected at plan time. Empty `indexer_image` is
+allowed while the service is off so relay CD (which only passes `relay_image`)
+keeps working; enabling without an image fails a precondition.
+
+After the first GHCR push, make the package
+`ghcr.io/adrienlacombe/the-situation-sdk/indexer` public (Packages → Change
+visibility) so ECS can pull without a registry secret.
+
+It is an HTTP service on port **8787**, unlike paymaster (egress-only):
+
+- Own security group: ingress from the ALB on 8787 only
+- Own EFS filesystem + access point for SQLite (`DB_PATH` under
+  `/var/lib/situation-indexer`) — not the relay git EFS, not RDS
+- Own Secrets Manager secret (`buzz-dev/indexer`) for `ADMIN_API_KEY` and
+  `VOYAGER_API_KEY` — unmanaged version, populated out of band
+- ALB HTTPS listener rule: host-header `markets.bitcoinmarkets.app` → indexer TG
+- Health check `GET /health` on the traffic port — not the relay `/_readiness`
+- Default listener action stays the relay
+
+The shared ACM certificate carries a SAN for `markets.bitcoinmarkets.app` even
+while the service is off (so enabling does not wait on a cert replacement). The
+Route53 A alias and listener rule appear only when `indexer_enabled` is true.
+
+Public URL for Wallet: **`INDEXER_URL=https://markets.bitcoinmarkets.app`**.
+
+### Turning it on
+
+Adrien applies AWS after the PR merges. Order matters — bootstrap first.
+
+1. **Apply the bootstrap stack** (separate state; CI never applies it):
+
+   ```bash
+   terraform -chdir=infra/aws/bootstrap apply
+   ```
+
+   Grants `iam:PassRole` on `buzz-dev-indexer-execution` / `buzz-dev-indexer-task`
+   and denies the deploy role `GetSecretValue` on `buzz-dev/indexer`.
+2. **Enable resources with `desired_count = 0`** so the secret and roles exist
+   without a crash-looping task:
+
+   ```hcl
+   indexer_enabled       = true
+   indexer_desired_count = 0
+   indexer_image         = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+   ```
+
+   (Also tagged `:sha-94279a1`; Terraform must use the tag@digest form above.)
+   Apply the main stack with the usual `relay_image` pin.
+3. **Populate the unmanaged secret** (keys only here — never commit values):
+
+   ```bash
+   aws secretsmanager put-secret-value \
+     --profile alc-tf --region eu-west-3 \
+     --secret-id "buzz-dev/indexer" \
+     --secret-string '{"ADMIN_API_KEY":"<offline>","VOYAGER_API_KEY":"<voyager>"}'
+   ```
+
+   `VOYAGER_API_KEY` (or `VOYAGER_API_KEYS`) is required to *start* in 0.19.1.
+   A dummy is enough for `GET /api/markets` after an admin POST — that route is
+   SQLite only. A real Voyager key is needed for event poll.
+4. Set `indexer_desired_count = 1` and apply again. The indexer ECS service does
+   **not** use `ignore_changes = [desired_count]` (unlike paymaster), so this
+   apply actually scales the service to one task.
+5. **After the task is healthy — register the v1 market** (not automated in Terraform):
+
+   ```bash
+   curl -X POST https://markets.bitcoinmarkets.app/admin/markets \
+     -H "Authorization: Bearer $ADMIN_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "address": "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8",
+       "title": "Bitcoin difficulty after next retarget",
+       "description": "Collateral: BTC",
+       "market_type": "lognormal",
+       "x_axis_label": "Difficulty",
+       "category": "bitcoin"
+     }'
+   ```
+
+   Listing copy says BTC. Do not put Starknet / Cairo / STRK in the title or
+   description. This is `markets.bitcoinmarkets.app`, not an sslip.io host.
+
+6. Point Wallet at `INDEXER_URL=https://markets.bitcoinmarkets.app`.
 
 ## Decisions worth knowing before changing them
 

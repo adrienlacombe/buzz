@@ -16,6 +16,11 @@ locals {
     var.relay_subdomain == "" ? var.domain_name : "${var.relay_subdomain}.${var.domain_name}"
   ) : null
 
+  # Markets indexer HTTPS host (the-situation indexer). SAN on the shared ACM
+  # cert; Route53 alias + ALB host-header rule are created from indexer.tf when
+  # indexer_enabled is true. Not a typo of the product name — bitcoinmarkets.app.
+  markets_fqdn = local.enable_dns ? "markets.${var.domain_name}" : null
+
   # Public origin clients dial. Without a domain there is no cert, so this
   # degrades to ws:// on the ALB hostname — fine for CLI testing, but browsers
   # on an https page will refuse it and the desktop app expects wss://.
@@ -25,6 +30,7 @@ locals {
 
   relay_url   = "${local.public_scheme}://${local.public_host}"
   http_origin = "${local.http_scheme}://${local.public_host}"
+  indexer_url = local.enable_dns ? "${local.http_scheme}://${local.markets_fqdn}" : null
 
   # BUZZ_MEDIA_BASE_URL must end with "/media" and must NOT end with a slash --
   # buzz-media rejects anything else at startup (crates/buzz-media/src/config.rs:103).

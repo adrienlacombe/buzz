@@ -42,6 +42,12 @@ locals {
   paymaster_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-paymaster-execution"
   paymaster_task_role_arn      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-paymaster-task"
 
+  # Same pattern for the markets indexer (../indexer.tf): own execution + task
+  # roles, so enabling it without this bootstrap apply breaks the next relay CD
+  # pass with iam:PassRole — apply bootstrap FIRST, then set indexer_enabled.
+  indexer_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-indexer-execution"
+  indexer_task_role_arn      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-indexer-task"
+
   # Secrets Manager appends a random 6-character suffix, so the exact ARN is not
   # derivable from the name and this must be a prefix match.
   identity_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/relay-identity-*"
@@ -49,6 +55,9 @@ locals {
   # The sponsor's Starknet signing key lives in here. Same reasoning as the relay
   # identity, with more at stake: this one spends money.
   paymaster_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/paymaster-*"
+
+  # Indexer ADMIN_API_KEY / VOYAGER_API_KEY — unmanaged version, never CI's to read.
+  indexer_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/indexer-*"
 }
 
 variable "project_name" {
@@ -235,6 +244,8 @@ resource "aws_iam_role_policy" "github_actions_iam" {
           local.task_role_arn,
           local.paymaster_execution_role_arn,
           local.paymaster_task_role_arn,
+          local.indexer_execution_role_arn,
+          local.indexer_task_role_arn,
         ]
         Condition = {
           StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" }
@@ -262,11 +273,12 @@ resource "aws_iam_role_policy" "github_actions_iam" {
       },
       {
         # PowerUserAccess already allows secretsmanager:*, and CI legitimately
-        # needs to manage the runtime secret. But the relay's identity key and the
-        # sponsor's Starknet signing key are never CI's business, so reading them is
-        # denied outright — which is also why ../secrets.tf and ../paymaster.tf
-        # deliberately do not manage those secrets' versions (Terraform reads a
-        # managed version back on every refresh, which would require the Get).
+        # needs to manage the runtime secret. But the relay's identity key, the
+        # sponsor's Starknet signing key, and the indexer ADMIN_API_KEY are never
+        # CI's business, so reading them is denied outright — which is also why
+        # ../secrets.tf, ../paymaster.tf and ../indexer.tf deliberately do not
+        # manage those secrets' versions (Terraform reads a managed version back
+        # on every refresh, which would require the Get).
         #
         # The paymaster entry is the one that matters most here: a workflow that
         # could read it could drain the sponsor's account, and every push to main
@@ -277,6 +289,7 @@ resource "aws_iam_role_policy" "github_actions_iam" {
         Resource = [
           local.identity_secret_arn_pattern,
           local.paymaster_secret_arn_pattern,
+          local.indexer_secret_arn_pattern,
         ]
       },
     ]
