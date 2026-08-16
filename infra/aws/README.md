@@ -261,8 +261,9 @@ Adrien applies AWS after the PR merges. Order matters — bootstrap first.
      --secret-string '{"ADMIN_API_KEY":"<offline>","VOYAGER_API_KEY":"<voyager>"}'
    ```
 
-   `VOYAGER_API_KEY` is required for boot in 0.19.1; a dummy is enough for
-   `GET /api/markets` after an admin POST.
+   `VOYAGER_API_KEY` (or `VOYAGER_API_KEYS`) is required to *start* in 0.19.1.
+   A dummy is enough for `GET /api/markets` after an admin POST — that route is
+   SQLite only. A real Voyager key is needed for event poll.
 4. Set `indexer_desired_count = 1` and apply again.
 5. **After the task is healthy — register the v1 market** (not automated in Terraform):
 

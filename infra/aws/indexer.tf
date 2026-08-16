@@ -279,13 +279,15 @@ resource "aws_efs_access_point" "indexer" {
 #     --secret-id "buzz-dev/indexer" \
 #     --secret-string '{
 #       "ADMIN_API_KEY": "<generate and keep offline>",
-#       "VOYAGER_API_KEY": "<voyager explorer API key>"
+#       "VOYAGER_API_KEY": "<voyager explorer API key, or a dummy to boot>"
 #     }'
 #
-# VOYAGER_API_KEY is required for the process to boot (0.19.1). A dummy value
-# is enough for GET /api/markets after an admin POST; live Voyager polling
-# needs a real key. VOYAGER_API_KEYS (comma-separated pool) is an alternative
-# the binary also accepts — put that key in the secret instead if you prefer.
+# Required to start (0.19.1): ADMIN_API_KEY, and VOYAGER_API_KEY or
+# VOYAGER_API_KEYS. Voyager is NOT needed for GET /api/markets after an admin
+# POST (that path is SQLite only) — a dummy key lets the process boot; a real
+# key is needed for event poll. Prefer VOYAGER_API_KEYS (comma-separated pool)
+# in the secret instead of VOYAGER_API_KEY if you want rotation; wire that env
+# name in the secrets block if you switch.
 resource "aws_secretsmanager_secret" "indexer" {
   count = var.indexer_enabled ? 1 : 0
 
@@ -372,8 +374,8 @@ resource "aws_lb_target_group" "indexer" {
   target_type = "ip"
   vpc_id      = aws_vpc.main.id
 
-  # Indexer serves GET /health on its traffic port (npm 0.19.1). Do NOT reuse
-  # the relay's /_readiness probe or health port 8080.
+  # Health: GET /health on PORT (8787). Listing: GET /api/markets.
+  # Do NOT reuse the relay's /_readiness probe or health port 8080.
   health_check {
     enabled             = true
     path                = "/health"
@@ -465,13 +467,22 @@ resource "aws_ecs_task_definition" "indexer" {
     }]
 
     environment = [
+      # Confirmed against @the-situation/indexer@0.19.1:
+      #   listen var is PORT (default 3000) — not INDEXER_PORT; binds 0.0.0.0
+      #   required to start: ADMIN_API_KEY + VOYAGER_API_KEY|VOYAGER_API_KEYS
+      #   also used: STARKNET_NETWORK, STARKNET_RPC_URL, DB_PATH, VOYAGER_API_BASE_URL
+      # Optional poll knobs (EVENT/STATE/POSITION_POLL_INTERVAL_MS, VOYAGER_*)
+      # are left at binary defaults.
+      { name = "PORT", value = tostring(local.indexer_port) },
       { name = "STARKNET_NETWORK", value = "mainnet" },
       { name = "STARKNET_RPC_URL", value = local.indexer_starknet_rpc_url },
-      { name = "PORT", value = tostring(local.indexer_port) },
+      { name = "VOYAGER_API_BASE_URL", value = "https://api.voyager.online/beta" },
       { name = "DB_PATH", value = local.indexer_db_path },
     ]
 
     # valueFrom with a trailing :key:: pulls one field out of the JSON secret.
+    # Voyager is required only to *boot*; GET /api/markets after POST /admin/markets
+    # is SQLite-only, so a dummy VOYAGER_API_KEY is enough until live polling.
     secrets = [
       { name = "ADMIN_API_KEY", valueFrom = "${aws_secretsmanager_secret.indexer[0].arn}:ADMIN_API_KEY::" },
       { name = "VOYAGER_API_KEY", valueFrom = "${aws_secretsmanager_secret.indexer[0].arn}:VOYAGER_API_KEY::" },
