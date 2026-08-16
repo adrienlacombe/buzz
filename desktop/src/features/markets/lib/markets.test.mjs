@@ -7,8 +7,6 @@ const HALT_BLOCKS_BEFORE_RETARGET = 24;
 const DEFAULT_INDEXER_URL = "http://127.0.0.1:8787";
 const DIFFICULTY_MARKET =
   "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
-const DIFFICULTY_MARKET_UNPADDED =
-  "0x23b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
 
 function walletFeeAmount(tokenAmount) {
   if (tokenAmount <= 0n) return 0n;
@@ -88,7 +86,7 @@ describe("betting halt at height", () => {
 });
 
 describe("INDEXER_URL", () => {
-  it("defaults to Adrien localhost indexer (configurable)", () => {
+  it("defaults to Adrien localhost and stays configurable", () => {
     assert.equal(DEFAULT_INDEXER_URL, "http://127.0.0.1:8787");
     assert.equal(resolveIndexerUrl({}), DEFAULT_INDEXER_URL);
     assert.equal(
@@ -97,26 +95,28 @@ describe("INDEXER_URL", () => {
     );
     assert.equal(
       resolveIndexerUrl({
-        VITE_INDEXER_URL: "https://markets.bitcoinmarkets.app/",
+        VITE_INDEXER_URL: "https://example.future-host.example/",
       }),
-      "https://markets.bitcoinmarkets.app",
+      "https://example.future-host.example",
     );
   });
 
-  it("matches unpadded indexer listing address to padded constant", () => {
+  it("matches CEO v1 listing row (padded address, BTC collateral copy)", () => {
     const listing = {
-      address: DIFFICULTY_MARKET_UNPADDED,
+      address: DIFFICULTY_MARKET,
       title: "Bitcoin difficulty after next retarget",
       marketType: "lognormal",
       xAxisLabel: "Difficulty",
     };
-    assert.equal(
-      normalizeMarketAddress(DIFFICULTY_MARKET),
-      normalizeMarketAddress(DIFFICULTY_MARKET_UNPADDED),
-    );
     const found = findDifficultyMarket([listing], DIFFICULTY_MARKET);
-    assert.equal(found?.address, DIFFICULTY_MARKET_UNPADDED);
+    assert.equal(found?.address, DIFFICULTY_MARKET);
+    assert.equal(found?.title, "Bitcoin difficulty after next retarget");
     assert.equal(found?.marketType, "lognormal");
     assert.equal(found?.xAxisLabel, "Difficulty");
+    // Still matches if a host returns an unpadded felt.
+    assert.equal(
+      normalizeMarketAddress("0x23b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8"),
+      normalizeMarketAddress(DIFFICULTY_MARKET),
+    );
   });
 });

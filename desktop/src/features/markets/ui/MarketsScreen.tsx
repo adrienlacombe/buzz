@@ -166,7 +166,9 @@ export function MarketsScreen() {
         <h1 className="text-xl font-semibold tracking-tight">Markets</h1>
         <p className="text-muted-foreground text-sm">{MARKET_TITLE}</p>
         <p className="text-muted-foreground text-xs">
-          {indexerHost ? `Indexer ${indexerHost}` : "Indexer unset (INDEXER_URL required)"}
+          {indexerHost
+            ? `Indexer ${indexerHost}`
+            : "Indexer (INDEXER_URL / default localhost)"}
           {height != null ? ` · Bitcoin tip ${height}` : null}
           {halted ? " · betting paused near retarget" : null}
         </p>

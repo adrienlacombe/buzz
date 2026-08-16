@@ -38,11 +38,12 @@ pub const RETARGET_INTERVAL: u64 = 2016;
 /// Halt betting this many blocks before the next retarget height.
 pub const HALT_BLOCKS_BEFORE_RETARGET: u64 = 24;
 
-/// Default indexer for listing the v1 market: Adrien's machine (`127.0.0.1:8787`,
-/// not sslip.io). Override with `INDEXER_URL`. Cloud / CI agents cannot reach
-/// that host — do not live-fetch the default URL as a build dependency.
+/// Default indexer for listing the v1 market (CEO-confirmed): Adrien's shared
+/// machine localhost `127.0.0.1:8787`. No public hostname yet — override with
+/// `INDEXER_URL` to swap hosts later. Cloud VMs cannot reach that host; wire
+/// the desktop client only and do not live-fetch from CI/agent.
 ///
-/// Listing endpoints on whatever host `INDEXER_URL` points at:
+/// Listing endpoints (no auth; never use indexer `ADMIN_API_KEY` here):
 /// - `GET {INDEXER_URL}/api/markets`
 /// - `GET {INDEXER_URL}/health`
 pub const DEFAULT_INDEXER_URL: &str = "http://127.0.0.1:8787";

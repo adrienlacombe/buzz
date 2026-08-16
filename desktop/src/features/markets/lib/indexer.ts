@@ -1,16 +1,19 @@
 /**
  * Resolve the markets indexer base URL for listing the v1 market.
  *
- * Configurable via `VITE_INDEXER_URL` / `INDEXER_URL`. Default is Adrien's
- * local indexer on the same host as his machine (not sslip.io):
- * `http://127.0.0.1:8787`.
+ * Configurable via `VITE_INDEXER_URL` / `INDEXER_URL` so the host can be
+ * swapped later. Default (no public hostname yet): Adrien's shared-machine
+ * localhost `http://127.0.0.1:8787`.
  *
- * Listing/health on whatever host INDEXER_URL points at:
+ * Public listing endpoints only (no auth):
  * - `GET {INDEXER_URL}/api/markets`
  * - `GET {INDEXER_URL}/health`
  *
- * Cloud / CI agents cannot reach Adrien's localhost — do not treat a live
- * fetch of the default URL as a build dependency.
+ * `ADMIN_API_KEY` lives only on the indexer host — never read it, and never
+ * put it in the Buzz repo, desktop client, or PR. Listing/health do not need it.
+ *
+ * Cloud VMs cannot reach Adrien's localhost; wire the desktop client only and
+ * do not live-fetch this default from CI/agent environments.
  */
 
 import { DEFAULT_INDEXER_URL } from "./constants";
@@ -54,6 +57,7 @@ export type IndexerMarket = {
   } | null;
 };
 
+/** Unauthenticated listing fetch — never sends ADMIN_API_KEY. */
 export async function fetchIndexerHealth(
   baseUrl = resolveIndexerUrl(),
 ): Promise<{ status: string }> {
@@ -64,6 +68,7 @@ export async function fetchIndexerHealth(
   return (await res.json()) as { status: string };
 }
 
+/** Unauthenticated listing fetch — never sends ADMIN_API_KEY. */
 export async function fetchIndexerMarkets(
   baseUrl = resolveIndexerUrl(),
 ): Promise<IndexerMarket[]> {
