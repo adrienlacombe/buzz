@@ -19,11 +19,11 @@
 //!                       Test:    https://sepolia.paymaster.avnu.fi
 //! BIND_ADDR             Listen address. Default: 0.0.0.0:8788
 //!
-//! INDEXER_URL           Required env for listing clients (no localhost
-//!                       default). Production: https://markets.bitcoinmarkets.app
-//!                       (GET {INDEXER_URL}/api/markets, GET {INDEXER_URL}/health).
-//!                       Do NOT ship http://127.0.0.1:8787. Hostname is locked
-//!                       while Markets adds the service in infra/aws.
+//! INDEXER_URL           Required on listing clients (no client default).
+//!                       Never http://127.0.0.1:8787 — localhost is
+//!                       listing-proof only. Set a public host when ready
+//!                       (e.g. https://markets.bitcoinmarkets.app).
+//!                       GET {INDEXER_URL}/api/markets, GET {INDEXER_URL}/health.
 //! ```
 
 use axum::{
@@ -80,21 +80,20 @@ async fn main() -> Result<(), BootError> {
         .trim_end_matches('/')
         .to_string();
 
-    // Documented for operators; this proxy does not call the indexer, but the
-    // same deploy unit usually sets INDEXER_URL. Refuse a loopback default by
-    // never inventing one here — only warn if an operator set loopback.
+    // Documented for operators; this proxy does not call the indexer.
+    // Listing clients must set INDEXER_URL themselves — never invent loopback.
     match std::env::var("INDEXER_URL") {
         Ok(url) if url.contains("127.0.0.1") || url.contains("localhost") => {
             warn!(
                 indexer_url = %url,
-                product = PRODUCT_INDEXER_URL,
-                "INDEXER_URL points at loopback; required product host is https://markets.bitcoinmarkets.app (no localhost default)"
+                expected = PRODUCT_INDEXER_URL,
+                "INDEXER_URL points at loopback; localhost is listing-proof only — set a public host"
             );
         }
         Ok(url) => info!(indexer_url = %url, "INDEXER_URL set"),
         Err(_) => info!(
-            product = PRODUCT_INDEXER_URL,
-            "INDEXER_URL unset on this process (clients must use https://markets.bitcoinmarkets.app)"
+            expected = PRODUCT_INDEXER_URL,
+            "INDEXER_URL unset on this process (listing clients require a public host; no localhost default)"
         ),
     }
 

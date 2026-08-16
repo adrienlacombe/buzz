@@ -1,13 +1,14 @@
-import { PRODUCT_INDEXER_URL } from "./constants";
-
 /**
  * Resolve the markets indexer base URL.
  *
- * Required product host: `https://markets.bitcoinmarkets.app` (domain
- * `bitcoinmarkets.app`). Prefer `VITE_INDEXER_URL` / `INDEXER_URL`; when unset,
- * use the product constant — never invent `http://127.0.0.1:8787`. Loopback is
- * listing-proof only and is refused. Hostname stays locked while Markets adds
- * the service in `infra/aws` and DNS propagates.
+ * `INDEXER_URL` (or `VITE_INDEXER_URL`) is **required**. There is no client
+ * default — especially not `http://127.0.0.1:8787`. Localhost is listing-proof
+ * only; Adrien does not want this run locally. Set a public host when ready
+ * (expected: `https://markets.bitcoinmarkets.app`).
+ *
+ * Listing on whatever host the env points at:
+ * - `GET {INDEXER_URL}/api/markets`
+ * - `GET {INDEXER_URL}/health`
  */
 export function resolveIndexerUrl(
   env: Record<string, string | undefined> = import.meta.env as Record<
@@ -15,14 +16,16 @@ export function resolveIndexerUrl(
     string | undefined
   >,
 ): string {
-  const raw =
-    env.VITE_INDEXER_URL?.trim() ||
-    env.INDEXER_URL?.trim() ||
-    PRODUCT_INDEXER_URL;
+  const raw = env.VITE_INDEXER_URL?.trim() || env.INDEXER_URL?.trim() || "";
+  if (!raw) {
+    throw new Error(
+      "INDEXER_URL is required (public host; no localhost default — do not use http://127.0.0.1:8787)",
+    );
+  }
   const base = raw.replace(/\/$/, "");
   if (/127\.0\.0\.1|localhost/i.test(base)) {
     throw new Error(
-      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app (required env, no localhost default)",
+      "INDEXER_URL must not be loopback; localhost is listing-proof only. Set a public host (e.g. https://markets.bitcoinmarkets.app).",
     );
   }
   return base;

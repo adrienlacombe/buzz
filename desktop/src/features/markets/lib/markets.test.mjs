@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 const WALLET_FEE_BPS = 10n;
 const RETARGET_INTERVAL = 2016;
 const HALT_BLOCKS_BEFORE_RETARGET = 24;
-const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
+const EXPECTED_PUBLIC_INDEXER_URL = "https://markets.bitcoinmarkets.app";
 
 function walletFeeAmount(tokenAmount) {
   if (tokenAmount <= 0n) return 0n;
@@ -26,13 +26,16 @@ function bettingHalted(currentHeight) {
 
 function resolveIndexerUrl(env = {}) {
   const raw =
-    (env.VITE_INDEXER_URL || "").trim() ||
-    (env.INDEXER_URL || "").trim() ||
-    PRODUCT_INDEXER_URL;
+    (env.VITE_INDEXER_URL || "").trim() || (env.INDEXER_URL || "").trim();
+  if (!raw) {
+    throw new Error(
+      "INDEXER_URL is required (public host; no localhost default — do not use http://127.0.0.1:8787)",
+    );
+  }
   const base = raw.replace(/\/$/, "");
   if (/127\.0\.0\.1|localhost/i.test(base)) {
     throw new Error(
-      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app (required env, no localhost default)",
+      "INDEXER_URL must not be loopback; localhost is listing-proof only",
     );
   }
   return base;
@@ -75,17 +78,21 @@ describe("betting halt at height", () => {
 });
 
 describe("INDEXER_URL", () => {
-  it("uses the product host, never loopback", () => {
-    assert.equal(PRODUCT_INDEXER_URL, "https://markets.bitcoinmarkets.app");
-    assert.equal(resolveIndexerUrl({}), PRODUCT_INDEXER_URL);
+  it("is required, accepts public host, refuses loopback default", () => {
+    assert.equal(EXPECTED_PUBLIC_INDEXER_URL, "https://markets.bitcoinmarkets.app");
+    assert.throws(() => resolveIndexerUrl({}), /INDEXER_URL is required/);
     assert.equal(
       resolveIndexerUrl({
-        VITE_INDEXER_URL: "https://markets.bitcoinmarkets.app/",
+        INDEXER_URL: "https://markets.bitcoinmarkets.app/",
       }),
       "https://markets.bitcoinmarkets.app",
     );
     assert.throws(
       () => resolveIndexerUrl({ INDEXER_URL: "http://127.0.0.1:8787" }),
+      /must not be loopback/,
+    );
+    assert.throws(
+      () => resolveIndexerUrl({ INDEXER_URL: "http://localhost:8787" }),
       /must not be loopback/,
     );
   });

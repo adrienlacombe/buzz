@@ -12,7 +12,6 @@ import {
   LN_MIN_SATS,
   MARKET_TITLE,
   MIN_TRADE_RAW,
-  PRODUCT_INDEXER_URL,
 } from "./lib/constants";
 import { createFundLightningQuote } from "./lib/fundLightning";
 import { bettingHalted } from "./lib/halt";
@@ -46,6 +45,7 @@ export function MarketsScreen() {
   const [invoice, setInvoice] = React.useState<string | null>(null);
   const [walletAddress, setWalletAddress] = React.useState<string | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [indexerHost, setIndexerHost] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -60,6 +60,7 @@ export function MarketsScreen() {
           ) ?? markets[0] ?? null;
         const tip = await fetchBitcoinHeight();
         if (cancelled) return;
+        setIndexerHost(base);
         setMarket(found);
         setHeight(tip);
         setHalted(bettingHalted(tip));
@@ -166,7 +167,7 @@ export function MarketsScreen() {
         <h1 className="text-xl font-semibold tracking-tight">Markets</h1>
         <p className="text-muted-foreground text-sm">{MARKET_TITLE}</p>
         <p className="text-muted-foreground text-xs">
-          Indexer {PRODUCT_INDEXER_URL}
+          {indexerHost ? `Indexer ${indexerHost}` : "Indexer unset (INDEXER_URL required)"}
           {height != null ? ` · Bitcoin tip ${height}` : null}
           {halted ? " · betting paused near retarget" : null}
         </p>

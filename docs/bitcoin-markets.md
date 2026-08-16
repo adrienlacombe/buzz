@@ -34,20 +34,21 @@ height (every 2016 blocks).
 
 ## INDEXER_URL
 
-Required env for deploy — **no localhost default**. Product host on
-`bitcoinmarkets.app` (locked even while Markets wires the service in
-`infra/aws` and DNS is still propagating):
+**Required env** — no client default, and **never** `http://127.0.0.1:8787`.
+Localhost is listing-proof only; Adrien does not want the indexer run locally
+for the product client. Set a public host when ready:
 
 ```text
 INDEXER_URL=https://markets.bitcoinmarkets.app
 ```
 
+Listing/health on whatever host `INDEXER_URL` points at:
+
 - `GET {INDEXER_URL}/api/markets`
 - `GET {INDEXER_URL}/health`
 
-Do not ship `http://127.0.0.1:8787` (listing-proof only). The desktop client
-uses the product host above (overridable via `VITE_INDEXER_URL` /
-`INDEXER_URL`) and refuses loopback.
+Desktop / Tauri refuse unset and loopback values (`VITE_INDEXER_URL` /
+`INDEXER_URL`). See `infra/aws/markets.tf.md`.
 
 ## AVNU_API_KEY
 

@@ -6,9 +6,11 @@
  */
 
 /**
- * Product indexer host on `bitcoinmarkets.app`.
- * Required deploy env: `INDEXER_URL=https://markets.bitcoinmarkets.app`
- * (no localhost default; never ship `http://127.0.0.1:8787`).
+ * Expected public indexer host for the `INDEXER_URL` env (set later / deploy).
+ *
+ * **Not a client default.** `INDEXER_URL` is required. Never ship
+ * `http://127.0.0.1:8787` — localhost is listing-proof only; Adrien does not
+ * want the indexer run locally for the product client.
  */
 export const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
 
