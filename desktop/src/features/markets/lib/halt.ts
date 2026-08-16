@@ -13,7 +13,8 @@ export function haltHeight(currentHeight: number): number {
 
 /**
  * Height-based betting halt helper (not wall-clock).
- * Product path prefers {@link bettingHaltedByRemainingBlocks} from mempool.
+ * Product path uses {@link bettingHaltedByRemainingBlocks} from mempool only —
+ * do not use this as a live fallback when the adjustment endpoint is down.
  */
 export function bettingHalted(currentHeight: number): boolean {
   return currentHeight >= haltHeight(currentHeight);

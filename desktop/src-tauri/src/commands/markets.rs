@@ -10,7 +10,7 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    assert_fee_is_first_call, assert_markets_signing_keyring, betting_halted,
+    assert_fee_is_first_call, assert_markets_signing_keyring,
     betting_halted_by_remaining_blocks, build_validated_bet_batch, markets_signing_keyring_name,
     resolve_avnu_proxy_url, resolve_indexer_url, BetCallHex, NOSTR_ACCOUNT_CLASS_HASH,
 };
@@ -66,72 +66,51 @@ pub struct DifficultyHaltStatus {
     pub next_retarget_height: Option<u64>,
     /// `true` when `remaining_blocks <= 24`.
     pub halted: bool,
-    /// Source used: `mempool` (live) or `height_fallback` (2016-block math).
+    /// Always `mempool` — product path has no tip-height fallback.
     pub source: String,
 }
 
 const MEMPOOL_DIFFICULTY_ADJUSTMENT_URL: &str =
     "https://mempool.space/api/v1/difficulty-adjustment";
-const MEMPOOL_TIP_HEIGHT_URL: &str = "https://mempool.space/api/blocks/tip/height";
 
-/// Fetch the product halt signal. Prefers mempool `remainingBlocks`; falls back
-/// to tip-height 2016-block math only if the adjustment endpoint is unavailable.
+/// Parse mempool difficulty-adjustment JSON into a halt status.
+///
+/// Fail closed: missing/`null` `remainingBlocks` is an error (never "not halted").
+fn difficulty_halt_status_from_adjustment(value: &Value) -> Result<DifficultyHaltStatus, String> {
+    let remaining = value
+        .get("remainingBlocks")
+        .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
+        .ok_or_else(|| format!("difficulty-adjustment missing remainingBlocks: {value}"))?;
+    let next = value
+        .get("nextRetargetHeight")
+        .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)));
+    Ok(DifficultyHaltStatus {
+        remaining_blocks: remaining,
+        next_retarget_height: next,
+        halted: betting_halted_by_remaining_blocks(remaining),
+        source: "mempool".into(),
+    })
+}
+
+/// Fetch the product halt signal from mempool `remainingBlocks` only.
+///
+/// No tip-height / 2016-block fallback: if the adjustment endpoint is down or
+/// the field is missing, return an error so `place_bet` aborts without signing.
 async fn fetch_difficulty_halt_status() -> Result<DifficultyHaltStatus, String> {
     let client = reqwest::Client::new();
-    match client.get(MEMPOOL_DIFFICULTY_ADJUSTMENT_URL).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            let value: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("difficulty-adjustment JSON: {e}"))?;
-            let remaining = value
-                .get("remainingBlocks")
-                .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
-                .ok_or_else(|| format!("difficulty-adjustment missing remainingBlocks: {value}"))?;
-            let next = value
-                .get("nextRetargetHeight")
-                .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)));
-            Ok(DifficultyHaltStatus {
-                remaining_blocks: remaining,
-                next_retarget_height: next,
-                halted: betting_halted_by_remaining_blocks(remaining),
-                source: "mempool".into(),
-            })
-        }
-        Ok(resp) => Err(format!("difficulty-adjustment HTTP {}", resp.status())),
-        Err(primary) => {
-            // Fallback: tip height + 2016-block math (still wallet-fetched).
-            let tip_resp = client
-                .get(MEMPOOL_TIP_HEIGHT_URL)
-                .send()
-                .await
-                .map_err(|e| {
-                    format!("difficulty-adjustment failed ({primary}); tip height also failed: {e}")
-                })?;
-            if !tip_resp.status().is_success() {
-                return Err(format!(
-                    "difficulty-adjustment failed ({primary}); tip height HTTP {}",
-                    tip_resp.status()
-                ));
-            }
-            let tip_text = tip_resp
-                .text()
-                .await
-                .map_err(|e| format!("tip height body: {e}"))?;
-            let tip: u64 = tip_text
-                .trim()
-                .parse()
-                .map_err(|_| format!("invalid tip height {tip_text:?}"))?;
-            let next = buzz_core_pkg::markets::next_retarget_height(tip);
-            let remaining = next.saturating_sub(tip);
-            Ok(DifficultyHaltStatus {
-                remaining_blocks: remaining,
-                next_retarget_height: Some(next),
-                halted: betting_halted(tip),
-                source: "height_fallback".into(),
-            })
-        }
+    let resp = client
+        .get(MEMPOOL_DIFFICULTY_ADJUSTMENT_URL)
+        .send()
+        .await
+        .map_err(|e| format!("difficulty-adjustment unreachable: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("difficulty-adjustment HTTP {}", resp.status()));
     }
+    let value: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("difficulty-adjustment JSON: {e}"))?;
+    difficulty_halt_status_from_adjustment(&value)
 }
 
 fn felt_hex(v: &str) -> Result<Felt, String> {
@@ -362,7 +341,10 @@ pub async fn place_bet(
     calls: Vec<PreparedCall>,
     token_amount: String,
 ) -> Result<PlaceBetResult, String> {
-    let halt = fetch_difficulty_halt_status().await?;
+    // Fail closed: unreachable/malformed adjustment → Err, no signing.
+    let halt = fetch_difficulty_halt_status().await.map_err(|e| {
+        format!("Betting is unavailable (Bitcoin height source unreachable): {e}")
+    })?;
     if halt.halted {
         return Err(format!(
             "Betting is paused until after the next Bitcoin difficulty retarget ({} blocks remaining)",
@@ -579,9 +561,10 @@ pub async fn markets_indexer_url() -> Result<String, String> {
 mod tests {
     use super::*;
     use buzz_core_pkg::markets::{
-        assert_markets_signing_keyring, is_human_keyring_name, MarketsError,
-        HUMAN_IDENTITY_KEYRING_NAME,
+        assert_markets_signing_keyring, betting_halted_by_remaining_blocks,
+        is_human_keyring_name, MarketsError, HUMAN_IDENTITY_KEYRING_NAME,
     };
+    use serde_json::json;
 
     #[test]
     fn agent_keyring_slot_used_by_secret_store_is_rejected() {
@@ -613,5 +596,51 @@ mod tests {
         let v = serde_json::to_value(&c).unwrap();
         assert_eq!(v["contractAddress"], "0x1");
         assert_eq!(v["entrypoint"], "execute_trade");
+    }
+
+    #[test]
+    fn remaining_blocks_signal_halts_at_24() {
+        // Import helper — do not reimplement the threshold.
+        assert!(!betting_halted_by_remaining_blocks(25));
+        assert!(betting_halted_by_remaining_blocks(24));
+        assert!(betting_halted_by_remaining_blocks(0));
+        let open = difficulty_halt_status_from_adjustment(&json!({
+            "remainingBlocks": 25,
+            "nextRetargetHeight": 963648,
+        }))
+        .expect("25 remaining must parse");
+        assert!(!open.halted);
+        assert_eq!(open.remaining_blocks, 25);
+        assert_eq!(open.source, "mempool");
+        let halted = difficulty_halt_status_from_adjustment(&json!({
+            "remainingBlocks": 24,
+        }))
+        .expect("24 remaining must parse");
+        assert!(halted.halted);
+        let at_retarget = difficulty_halt_status_from_adjustment(&json!({
+            "remainingBlocks": 0,
+        }))
+        .expect("0 remaining must parse");
+        assert!(at_retarget.halted);
+    }
+
+    #[test]
+    fn missing_adjustment_remaining_blocks_fails_closed() {
+        // Product hole this PR closes: never treat a bad/missing adjustment
+        // payload as "not halted" (no tip-height green light).
+        let err = difficulty_halt_status_from_adjustment(&json!({
+            "nextRetargetHeight": 963648,
+        }))
+        .expect_err("missing remainingBlocks must error");
+        assert!(
+            err.contains("remainingBlocks"),
+            "error must name the field: {err}"
+        );
+        let null_err = difficulty_halt_status_from_adjustment(&json!({
+            "remainingBlocks": null,
+        }))
+        .expect_err("null remainingBlocks must error");
+        assert!(null_err.contains("remainingBlocks"));
+        assert!(difficulty_halt_status_from_adjustment(&json!({})).is_err());
     }
 }

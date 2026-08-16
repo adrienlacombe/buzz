@@ -35,10 +35,12 @@ screen uses Atomiq `@atomiqlabs/sdk` `FROM_BTCLN_AUTO` into that address
    (`agent:<pubkey>`) never receive a Starknet account.
 
 Halt: wallet-owned (not indexer). Product signal is mempool.space
-`GET /api/v1/difficulty-adjustment` — disable betting when
-`remainingBlocks <= 24` (next retarget − 24). Tauri
-`difficulty_halt_status` feeds the UI; `place_bet` re-fetches and refuses.
-2016-block tip-height math remains as a unit-test / fallback helper only.
+`GET /api/v1/difficulty-adjustment` only — disable betting when
+`remainingBlocks <= 24` (next retarget − 24). If that endpoint is
+unreachable or the field is missing, fail closed (no tip-height
+fallback): `place_bet` aborts without signing and the UI disables Place
+bet. Tauri `difficulty_halt_status` feeds the UI; `place_bet` re-fetches.
+2016-block tip-height math remains as a unit-test helper only.
 Operator settle/pause after retarget is out of scope here.
 
 ## INDEXER_URL
