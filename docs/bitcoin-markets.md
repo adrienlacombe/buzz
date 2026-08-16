@@ -88,23 +88,35 @@ No `executeTrade()`. Do not bump approve / `supplied_collateral` for the fee.
 
 ## AVNU_API_KEY / AVNU_PROXY_URL
 
-Set `AVNU_API_KEY` only on `buzz-avnu-proxy` (never in the Tauri binary):
+Product desktop talks to the public SNIP-29 proxy without a user-set env:
+
+```text
+AVNU_PROXY_URL=https://paymaster.bitcoinmarkets.app   # product host (default)
+```
+
+`AVNU_PROXY_URL` may override; unset / empty falls back to that host. Loopback
+(`127.0.0.1`, `localhost`, `0.0.0.0`, `[::1]`) is refused. This is
+`buzz-avnu-proxy`, **not** the old Nostr/STRK `buzz-paymaster` (`paymaster.tf`
+stays off).
+
+Set `AVNU_API_KEY` only on the hosted proxy (never in the Tauri binary, repo,
+or client). Non-loopback `/rpc` requires Bearer
+`AVNU_PROXY_AUTH_TOKEN` in the desktop process env at runtime — sourced from
+AWS secret `buzz-dev/avnu-proxy` (never committed; never baked into the
+client). Missing token fails closed; the header is never silently omitted.
+
+Proxy process env (server-side only):
 
 ```text
 AVNU_API_KEY=…          # from portal.avnu.fi — never commit
 AVNU_PAYMASTER_URL=https://starknet.paymaster.avnu.fi
-BIND_ADDR=127.0.0.1:8788   # loopback default — not 0.0.0.0
-# Non-loopback binds require:
-# PROXY_AUTH_TOKEN=…
+BIND_ADDR=0.0.0.0:8788  # non-loopback in AWS; requires PROXY_AUTH_TOKEN
+PROXY_AUTH_TOKEN=…      # same secret material as AVNU_PROXY_AUTH_TOKEN
 ```
 
-The proxy is **not** an unauthenticated open relay: default bind is loopback,
-there is no `CORS Any`, and off-loopback requires Bearer `PROXY_AUTH_TOKEN`.
-Production sponsorship is the AWS paymaster (egress-only, no ingress).
+The proxy is **not** an unauthenticated open relay: there is no `CORS Any`,
+and off-loopback requires Bearer. Health:
+`GET https://paymaster.bitcoinmarkets.app/health` →
+`{"service":"buzz-avnu-proxy","status":"ok"}`.
 
-Desktop `AVNU_PROXY_URL` is **required** (public host / required env). There is
-**no** `http://127.0.0.1:8788` product default — shipped builds refuse
-loopback. Optional `AVNU_PROXY_AUTH_TOKEN` is sent as Bearer when the proxy
-requires auth.
-
-Run locally: `cargo run -p buzz-avnu-proxy`. The key never enters the client.
+The API key never enters the client.

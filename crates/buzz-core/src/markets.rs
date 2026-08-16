@@ -48,6 +48,16 @@ pub const HALT_BLOCKS_BEFORE_RETARGET: u64 = 24;
 /// - `GET {INDEXER_URL}/health`
 pub const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
 
+/// Product AVNU SNIP-29 proxy host on `bitcoinmarkets.app`.
+///
+/// Deploy may set `AVNU_PROXY_URL` to this value, or rely on this public host.
+/// **No localhost default** — loopback (`http://127.0.0.1:8788`) was local-only
+/// and must not ship. `AVNU_API_KEY` stays server-side on the proxy only.
+///
+/// Health: `GET {AVNU_PROXY_URL}/health` →
+/// `{"service":"buzz-avnu-proxy","status":"ok"}`.
+pub const PRODUCT_AVNU_PROXY_URL: &str = "https://paymaster.bitcoinmarkets.app";
+
 /// Keyring entry name for the human identity nsec.
 pub const HUMAN_IDENTITY_KEYRING_NAME: &str = "identity";
 
@@ -66,15 +76,9 @@ pub enum MarketsError {
          (required env / public host, no localhost default)"
     )]
     IndexerUrlLoopback,
-    /// `AVNU_PROXY_URL` unset — required env / public host, no localhost default.
+    /// `AVNU_PROXY_URL` pointed at loopback; public product host required.
     #[error(
-        "AVNU_PROXY_URL is required (public host / required env; no localhost default \
-         such as http://127.0.0.1:8788)"
-    )]
-    AvnuProxyUrlMissing,
-    /// `AVNU_PROXY_URL` pointed at loopback; shipped builds must not use it.
-    #[error(
-        "AVNU_PROXY_URL must not be loopback; set a public proxy host \
+        "AVNU_PROXY_URL must not be loopback; use https://paymaster.bitcoinmarkets.app \
          (required env / public host, no localhost default)"
     )]
     AvnuProxyUrlLoopback,
@@ -222,20 +226,20 @@ pub fn resolve_indexer_url_from(raw: Option<&str>) -> Result<String, MarketsErro
     Ok(base.to_string())
 }
 
-/// Resolve the AVNU paymaster proxy base URL from `AVNU_PROXY_URL`.
+/// Resolve the AVNU SNIP-29 proxy base URL from `AVNU_PROXY_URL`.
 ///
-/// **Required env / public host.** No `http://127.0.0.1:8788` product default —
-/// shipped builds must not point at loopback. Refuses loopback even when set.
+/// Required env, or the product public host [`PRODUCT_AVNU_PROXY_URL`].
+/// Refuses loopback — no `http://127.0.0.1:8788` default.
 pub fn resolve_avnu_proxy_url() -> Result<String, MarketsError> {
     resolve_avnu_proxy_url_from(std::env::var("AVNU_PROXY_URL").ok().as_deref())
 }
 
-/// Resolve AVNU proxy URL from an optional raw env value.
+/// Resolve from an optional raw env value (tests / callers that already read env).
 pub fn resolve_avnu_proxy_url_from(raw: Option<&str>) -> Result<String, MarketsError> {
-    let chosen = raw.map(str::trim).filter(|s| !s.is_empty());
-    let Some(chosen) = chosen else {
-        return Err(MarketsError::AvnuProxyUrlMissing);
-    };
+    let chosen = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(PRODUCT_AVNU_PROXY_URL);
     let base = chosen.trim_end_matches('/');
     if url_is_loopback(base) {
         return Err(MarketsError::AvnuProxyUrlLoopback);
@@ -540,14 +544,25 @@ mod tests {
     }
 
     #[test]
-    fn avnu_proxy_url_required_never_loopback() {
+    fn avnu_proxy_url_is_product_host_never_loopback() {
         assert_eq!(
-            resolve_avnu_proxy_url_from(None),
-            Err(MarketsError::AvnuProxyUrlMissing)
+            PRODUCT_AVNU_PROXY_URL,
+            "https://paymaster.bitcoinmarkets.app"
+        );
+        assert!(PRODUCT_AVNU_PROXY_URL.starts_with("https://"));
+        assert!(!PRODUCT_AVNU_PROXY_URL.contains("127.0.0.1"));
+        assert!(!PRODUCT_AVNU_PROXY_URL.contains("localhost"));
+        assert_eq!(
+            resolve_avnu_proxy_url_from(None).unwrap(),
+            PRODUCT_AVNU_PROXY_URL
         );
         assert_eq!(
-            resolve_avnu_proxy_url_from(Some("")),
-            Err(MarketsError::AvnuProxyUrlMissing)
+            resolve_avnu_proxy_url_from(Some("")).unwrap(),
+            PRODUCT_AVNU_PROXY_URL
+        );
+        assert_eq!(
+            resolve_avnu_proxy_url_from(Some("https://paymaster.bitcoinmarkets.app/")).unwrap(),
+            "https://paymaster.bitcoinmarkets.app"
         );
         assert_eq!(
             resolve_avnu_proxy_url_from(Some("http://127.0.0.1:8788")),
