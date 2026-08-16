@@ -10,8 +10,10 @@
 // to use it or it opens upstream Buzz — or nothing. `buzz:` stays accepted
 // because those links are already sitting in message history and would otherwise
 // render as dead text.
-const MESSAGE_LINK_SCHEME = "bitcoinmarkets:";
-const LEGACY_MESSAGE_LINK_SCHEME = "buzz:";
+/** Emitted scheme for freshly built message deep links (OS-registered). */
+export const MESSAGE_LINK_SCHEME = "bitcoinmarkets:";
+/** Accepted inbound scheme for links already in message history. */
+export const LEGACY_MESSAGE_LINK_SCHEME = "buzz:";
 const MESSAGE_LINK_HOST = "message";
 
 export type MessageLinkInput = {
