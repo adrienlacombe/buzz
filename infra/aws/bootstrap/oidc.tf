@@ -425,6 +425,7 @@ resource "aws_iam_role_policy" "indexer_ecr_push" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:DescribeRepositories",
+          "ecr:DescribeImages",
         ]
         Resource = [local.indexer_ecr_repository_arn]
       },
