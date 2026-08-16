@@ -128,6 +128,8 @@ android {
 }
 
 dependencies {
+    implementation("androidx.appcompat:appcompat:1.6.1")
+
     testImplementation(kotlin("test"))
 
     androidTestImplementation(kotlin("test"))

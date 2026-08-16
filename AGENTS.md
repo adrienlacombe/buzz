@@ -872,6 +872,27 @@ Known-still-hardcoded upstream, not yet patched here: `helm-chart.yml` has a
 `CHART_REPO` (`:20`), and `signed-macos-canary.yml:104` still carries the
 root-lockfile mesh-llm bug fixed in `ci.yml`.
 
+<!-- END FORK-LOCAL SECTION -->
+
+---
+
+## Product Contract
+
+Before planning or reviewing a non-trivial change:
+
+1. Read [VISION.md](VISION.md).
+2. Read the `VISION_*.md` documents relevant to the affected product surface.
+3. Read the applicable guidance in [TESTING.md](TESTING.md) and any
+   package-local `TESTING.md`.
+4. Check that the proposed design advances, or at least does not contradict,
+   that product intent. Call out any intentional tension explicitly.
+
+Implementation describes the product today; the vision documents describe the
+product it is becoming. A locally correct change can still be wrong if it works
+against that direction. Scale validation to the change's risk and exercise the
+real workflow for user-visible or integration behavior when practical; green CI
+and runtime evidence answer different questions.
+
 ---
 
 ## Ecosystem
