@@ -424,8 +424,18 @@ resource "aws_iam_role_policy" "indexer_ecr_push" {
           "ecr:InitiateLayerUpload",
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
+          "ecr:DescribeRepositories",
         ]
         Resource = [local.indexer_ecr_repository_arn]
+      },
+      {
+        # aws ecr describe-repositories often authorizes against Resource "*",
+        # even when --repository-names names one repo. Without this, the SDK
+        # existence check 403s after bootstrap apply despite the repo-ARN grant.
+        Sid      = "DescribeRepositories"
+        Effect   = "Allow"
+        Action   = ["ecr:DescribeRepositories"]
+        Resource = "*"
       },
     ]
   })
