@@ -132,15 +132,21 @@ variable "indexer_ecr_push_oidc_sub_prefix_immutable" {
     GitHub's ID-based OIDC subject prefix for the-situation-sdk, same form as
     github_oidc_sub_prefix_immutable ("repo:<owner>@<account_id>/<repo>@<repo_id>").
 
-    Default is "" (name-based trust only). Discover the live ID form with:
+    GitHub issues subject claims containing numeric IDs rather than names for this
+    repo, so a trust policy written only against the name-based form
+    ("repo:owner/repo:ref:...") is rejected with:
+
+      Not authorized to perform sts:AssumeRoleWithWebIdentity
+
+    That is the same silent-failure mode as github_oidc_sub_prefix_immutable for
+    the buzz deploy role. Both forms are trusted so a change on GitHub's side in
+    either direction cannot break SDK → ECR pushes. Set to "" to trust only the
+    name-based form. Discover or re-check the live ID form with:
 
       gh api repos/adrienlacombe/the-situation-sdk/actions/oidc/customization/sub
-
-    and set it here so both forms are trusted — same silent-failure mode as the
-    buzz deploy role if GitHub presents the ID claim and we only trust the name.
   EOT
   type        = string
-  default     = ""
+  default     = "repo:adrienlacombe@6303520/the-situation-sdk@1335848888"
 }
 
 # A data source, not a resource: this account already has
