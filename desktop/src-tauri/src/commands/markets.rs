@@ -11,8 +11,7 @@
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
     assert_human_keyring_name, betting_halted, betting_halted_by_remaining_blocks,
-    resolve_indexer_url, wallet_fee_amount, HUMAN_IDENTITY_KEYRING_NAME,
-    NOSTR_ACCOUNT_CLASS_HASH,
+    resolve_indexer_url, wallet_fee_amount, HUMAN_IDENTITY_KEYRING_NAME, NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
     any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
@@ -78,11 +77,7 @@ const MEMPOOL_TIP_HEIGHT_URL: &str = "https://mempool.space/api/blocks/tip/heigh
 /// to tip-height 2016-block math only if the adjustment endpoint is unavailable.
 async fn fetch_difficulty_halt_status() -> Result<DifficultyHaltStatus, String> {
     let client = reqwest::Client::new();
-    match client
-        .get(MEMPOOL_DIFFICULTY_ADJUSTMENT_URL)
-        .send()
-        .await
-    {
+    match client.get(MEMPOOL_DIFFICULTY_ADJUSTMENT_URL).send().await {
         Ok(resp) if resp.status().is_success() => {
             let value: Value = resp
                 .json()
@@ -91,9 +86,7 @@ async fn fetch_difficulty_halt_status() -> Result<DifficultyHaltStatus, String> 
             let remaining = value
                 .get("remainingBlocks")
                 .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
-                .ok_or_else(|| {
-                    format!("difficulty-adjustment missing remainingBlocks: {value}")
-                })?;
+                .ok_or_else(|| format!("difficulty-adjustment missing remainingBlocks: {value}"))?;
             let next = value
                 .get("nextRetargetHeight")
                 .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)));
@@ -104,10 +97,7 @@ async fn fetch_difficulty_halt_status() -> Result<DifficultyHaltStatus, String> 
                 source: "mempool".into(),
             })
         }
-        Ok(resp) => Err(format!(
-            "difficulty-adjustment HTTP {}",
-            resp.status()
-        )),
+        Ok(resp) => Err(format!("difficulty-adjustment HTTP {}", resp.status())),
         Err(primary) => {
             // Fallback: tip height + 2016-block math (still wallet-fetched).
             let tip_resp = client
@@ -115,9 +105,7 @@ async fn fetch_difficulty_halt_status() -> Result<DifficultyHaltStatus, String> 
                 .send()
                 .await
                 .map_err(|e| {
-                    format!(
-                        "difficulty-adjustment failed ({primary}); tip height also failed: {e}"
-                    )
+                    format!("difficulty-adjustment failed ({primary}); tip height also failed: {e}")
                 })?;
             if !tip_resp.status().is_success() {
                 return Err(format!(
