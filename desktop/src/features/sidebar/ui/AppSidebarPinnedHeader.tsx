@@ -1,4 +1,11 @@
-import { Activity, Bot, FolderGit2, Inbox, Zap } from "lucide-react";
+import {
+  Activity,
+  Bot,
+  ChartNoAxesCombined,
+  FolderGit2,
+  Inbox,
+  Zap,
+} from "lucide-react";
 
 import { TopbarSearch } from "@/features/search/ui/TopbarSearch";
 import { FeatureGate } from "@/shared/features";
@@ -105,45 +112,53 @@ export function AppSidebarPrimaryMenu({
       data-testid="sidebar-primary-menu"
     >
       <SidebarMenu className="pb-2">
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            className="data-[active=true]:font-normal"
-            isActive={selectedView === "home"}
-            onClick={onSelectHome}
-            tooltip="Inbox"
-            type="button"
-          >
-            <Inbox
-              className={
-                selectedView !== "home" ? "h-4 w-4 opacity-80" : "h-4 w-4"
-              }
-            />
-            <SidebarMenuLabel
-              className={selectedView !== "home" ? "opacity-80" : undefined}
+        {/*
+          Inbox + Markets share one row so Markets stays in the primary menu
+          without adding a full extra h-8 above the custom-section DnD list
+          (smoke virtualization.spec.ts "06 — custom-section dnd reorder").
+        */}
+        <SidebarMenuItem className="p-0">
+          <div className="grid w-full grid-cols-2 gap-1">
+            <div className="relative min-w-0">
+              <SidebarMenuButton
+                className="data-[active=true]:font-normal"
+                isActive={selectedView === "home"}
+                onClick={onSelectHome}
+                tooltip="Inbox"
+                type="button"
+              >
+                <Inbox
+                  className={
+                    selectedView !== "home" ? "h-4 w-4 opacity-80" : "h-4 w-4"
+                  }
+                />
+                <SidebarMenuLabel
+                  className={selectedView !== "home" ? "opacity-80" : undefined}
+                >
+                  Inbox
+                </SidebarMenuLabel>
+              </SidebarMenuButton>
+              {homeBadgeCount > 0 ? (
+                <SidebarMenuBadge
+                  className="right-1 rounded-full bg-primary/15 px-1.5 text-2xs text-primary peer-data-[active=true]/menu-button:bg-sidebar-active-foreground/20 peer-data-[active=true]/menu-button:text-sidebar-active-foreground"
+                  data-testid="sidebar-home-count"
+                >
+                  {Math.min(homeBadgeCount, 99)}
+                </SidebarMenuBadge>
+              ) : null}
+            </div>
+            <SidebarMenuButton
+              className="min-w-0 data-[active=true]:font-normal"
+              data-testid="open-markets-view"
+              isActive={selectedView === "markets"}
+              onClick={onSelectMarkets}
+              tooltip="Markets"
+              type="button"
             >
-              Inbox
-            </SidebarMenuLabel>
-          </SidebarMenuButton>
-          {homeBadgeCount > 0 ? (
-            <SidebarMenuBadge
-              className="right-2 rounded-full bg-primary/15 px-1.5 text-2xs text-primary peer-data-[active=true]/menu-button:bg-sidebar-active-foreground/20 peer-data-[active=true]/menu-button:text-sidebar-active-foreground"
-              data-testid="sidebar-home-count"
-            >
-              {Math.min(homeBadgeCount, 99)}
-            </SidebarMenuBadge>
-          ) : null}
-        </SidebarMenuItem>
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            data-testid="open-markets-view"
-            isActive={selectedView === "markets"}
-            onClick={onSelectMarkets}
-            tooltip="Markets"
-            type="button"
-          >
-            <Zap className="h-4 w-4" />
-            <SidebarMenuLabel>Markets</SidebarMenuLabel>
-          </SidebarMenuButton>
+              <ChartNoAxesCombined className="h-4 w-4" />
+              <SidebarMenuLabel>Markets</SidebarMenuLabel>
+            </SidebarMenuButton>
+          </div>
         </SidebarMenuItem>
         <FeatureGate feature="pulse">
           <SidebarMenuItem>
