@@ -220,6 +220,13 @@ resource "aws_secretsmanager_secret" "avnu_proxy" {
   recovery_window_in_days = 7
 
   tags = { Name = "${local.name}-avnu-proxy" }
+
+  lifecycle {
+    # This secret is imported; destroying it schedules AWS deletion and breaks
+    # the live paymaster. Do not flip avnu_proxy_enabled to false in committed
+    # tfvars.
+    prevent_destroy = true
+  }
 }
 
 # ── IAM ──────────────────────────────────────────────────────────────────────
