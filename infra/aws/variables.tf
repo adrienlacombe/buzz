@@ -253,7 +253,8 @@ variable "force_destroy_media_bucket" {
 variable "starknet_rpc_url" {
   description = <<-EOT
     Starknet JSON-RPC endpoint, consumed by buzz-paymaster as
-    BUZZ_PAYMASTER_RPC_URL.
+    BUZZ_PAYMASTER_RPC_URL and by the markets indexer as STARKNET_RPC_URL
+    (when indexer_enabled).
 
     Renamed from `starknet_rpc_sn_main`, which fed BUZZ_STARKNET_RPC_SN_MAIN on
     the relay container for NIP-SW wallet-binding verification. NIP-SW was
@@ -271,7 +272,7 @@ variable "starknet_rpc_url" {
 
     Public endpoint, so a plain env var rather than a Secrets Manager entry. If you
     move to a provider that embeds an API key in the URL, move this to the
-    `secrets` block in paymaster.tf instead.
+    `secrets` block in paymaster.tf / indexer.tf instead.
   EOT
   type        = string
   default     = ""

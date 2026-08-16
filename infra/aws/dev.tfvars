@@ -103,6 +103,30 @@ paymaster_enabled       = false
 paymaster_desired_count = 0
 # paymaster_account_class_hash = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537"
 
+# ── Markets indexer (@the-situation/indexer) ─────────────────────────────────
+# Disabled. indexer_enabled = false means **no resources at all** — same lesson
+# as paymaster: half-adding IAM roles without bootstrap PassRole breaks relay CD.
+#
+# Turning it on, in this order (Adrien applies AWS after the PR merges):
+#
+#   1. terraform -chdir=infra/aws/bootstrap apply
+#      (PassRole on indexer roles + GetSecretValue Deny on buzz-dev/indexer)
+#   2. Set indexer_enabled = true, indexer_desired_count = 0, and an immutable
+#      indexer_image pin (creates secret/roles/TG without starting a task):
+#        indexer_image = "ghcr.io/<owner>/situation-indexer:0.19.1"
+#      Rejects :main / :latest. Do NOT reuse relay_image.
+#   3. put-secret-value ADMIN_API_KEY + VOYAGER_API_KEY (keys only in docs —
+#      see indexer.tf / README). Never commit values.
+#   4. Set indexer_desired_count = 1 and apply again.
+#   5. POST /admin/markets for the v1 market (payload in README).
+#   6. Wallet INDEXER_URL = https://markets.bitcoinmarkets.app
+#
+# ACM already gains a markets.bitcoinmarkets.app SAN with this PR (shared cert).
+# Route53 A alias + ALB host-header rule appear only when enabled.
+indexer_enabled       = false
+indexer_desired_count = 0
+# indexer_image = "ghcr.io/<owner>/situation-indexer:0.19.1"
+
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
 

@@ -48,6 +48,16 @@ output "identity_secret_id" {
   value       = aws_secretsmanager_secret.identity.name
 }
 
+output "indexer_url" {
+  description = "HTTPS origin for the markets indexer (INDEXER_URL for Wallet). Null while indexer_enabled is false or DNS is off."
+  value       = var.indexer_enabled ? local.indexer_url : null
+}
+
+output "indexer_secret_id" {
+  description = "Secret holding ADMIN_API_KEY / VOYAGER_API_KEY. Null while indexer_enabled is false. Terraform never writes values here."
+  value       = var.indexer_enabled ? aws_secretsmanager_secret.indexer[0].name : null
+}
+
 output "next_steps" {
   description = "Commands to finish the deploy."
 

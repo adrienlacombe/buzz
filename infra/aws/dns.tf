@@ -16,8 +16,9 @@ data "aws_route53_zone" "main" {
 resource "aws_acm_certificate" "main" {
   count = local.enable_dns ? 1 : 0
 
-  domain_name       = local.relay_fqdn
-  validation_method = "DNS"
+  domain_name               = local.relay_fqdn
+  subject_alternative_names = [local.markets_fqdn]
+  validation_method         = "DNS"
 
   tags = { Name = local.relay_fqdn }
 
@@ -64,6 +65,24 @@ resource "aws_route53_record" "relay" {
 
   zone_id = data.aws_route53_zone.main[0].zone_id
   name    = local.relay_fqdn
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
+    evaluate_target_health = true
+  }
+}
+
+# markets.<domain> → same ALB. Host-header rule in indexer.tf forwards to the
+# indexer target group; without indexer_enabled the record is absent so a
+# half-added service cannot send clients at an unbound hostname that would
+# otherwise fall through to the relay default action.
+resource "aws_route53_record" "markets" {
+  count = local.enable_dns && var.indexer_enabled ? 1 : 0
+
+  zone_id = data.aws_route53_zone.main[0].zone_id
+  name    = local.markets_fqdn
   type    = "A"
 
   alias {
