@@ -52,11 +52,12 @@ RDS subnet group requires ≥2. "Single-AZ" refers to the RDS and Redis instance
 | `dns.tf` | ACM cert (relay + markets SAN), validation records, alias records |
 | `ecs.tf` | Cluster, IAM roles, task definition, service |
 | `paymaster.tf` | **Whole** `buzz-paymaster` service — its own SG, IAM roles and secret. Off by default |
+| `ecr.tf` | Markets indexer ECR repository (`buzz-dev-indexer`) — always created; no PassRole surface |
 | `indexer.tf` | **Whole** markets indexer (`@the-situation/indexer`) — own SG, IAM, secret, EFS, TG, host-header rule. Off by default |
-| `oidc.tf` | GitHub Actions deploy role (OIDC, no stored keys) — lives under `bootstrap/` |
+| `oidc.tf` | GitHub Actions deploy role + indexer ECR push role (OIDC) — lives under `bootstrap/` |
 | `outputs.tf` | URLs, endpoints, next-step commands |
 | `dev.tfvars` | **Committed** config for the dev environment (no secrets) |
-| `bootstrap/` | Creates the S3 state bucket + OIDC deploy role (own local state) |
+| `bootstrap/` | Creates the S3 state bucket + OIDC deploy role + indexer ECR push role (own local state) |
 
 ## Deploy
 
@@ -205,7 +206,10 @@ sending, so anything that would revert is refused for free.
 ## Markets indexer (`@the-situation/indexer`)
 
 Off by default and safe to ignore until you want it. `indexer_enabled = false`
-means **no resources on the create path**, same count-gating lesson as paymaster.
+means **no ECS/IAM/EFS/secret resources on the create path**, same count-gating
+lesson as paymaster. The ECR repository (`buzz-dev-indexer` in `ecr.tf`) is the
+exception: it is always created so the-situation-sdk can push before ECS exists.
+Do not use or collide with `bim-indexer` in this account (different product).
 
 Once enabled, setting `indexer_enabled = false` will **fail plan** because the
 indexer EFS carries `lifecycle.prevent_destroy`. That is intentional so CD cannot
@@ -214,15 +218,27 @@ wipe the markets SQLite. To disable after enable you must first
 count-gated resources). "Off means no resources" is not a silent destroy of an
 existing DB. The indexer secret uses a 7-day recovery window for the same reason.
 
-This is **not** the relay. The container is `@the-situation/indexer` (npm 0.19.1);
+This is **not** the relay. The container is `@the-situation/indexer` (npm);
 `indexer_image` is a separate variable and must not reuse `relay_image`. Mutable
 `:main` / `:latest` tags are rejected at plan time. Empty `indexer_image` is
 allowed while the service is off so relay CD (which only passes `relay_image`)
 keeps working; enabling without an image fails a precondition.
 
-After the first GHCR push, make the package
-`ghcr.io/adrienlacombe/the-situation-sdk/indexer` public (Packages → Change
-visibility) so ECS can pull without a registry secret.
+**Image path is Amazon ECR + IAM only.** Anonymous GHCR pull of the private
+`the-situation-sdk/indexer` package is 401. Fine-grained PATs cannot do GitHub
+Packages; we will not mint a classic PAT, will not make the-situation-sdk public,
+and will not add `buzz-dev/indexer-ghcr` or ECS `repositoryCredentials`. The SDK
+workflow on `main` assumes
+`arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push` and pushes to ECR.
+The indexer execution role already has `AmazonECSTaskExecutionRolePolicy`, which
+is enough to pull from ECR. Enable waits on an ECR pin of the form:
+
+```text
+618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<immutable>@sha256:<digest>
+```
+
+Historical GHCR digest (not an enable pin):
+`ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596`.
 
 It is an HTTP service on port **8787**, unlike paymaster (egress-only):
 
@@ -230,7 +246,8 @@ It is an HTTP service on port **8787**, unlike paymaster (egress-only):
 - Own EFS filesystem + access point for SQLite (`DB_PATH` under
   `/var/lib/situation-indexer`) — not the relay git EFS, not RDS
 - Own Secrets Manager secret (`buzz-dev/indexer`) for `ADMIN_API_KEY` and
-  `VOYAGER_API_KEY` — unmanaged version, populated out of band
+  `VOYAGER_API_KEY` — unmanaged version, populated out of band (does not exist
+  until first enable; do not invent an indexer-ghcr secret)
 - ALB HTTPS listener rule: host-header `markets.bitcoinmarkets.app` → indexer TG
 - Health check `GET /health` on the traffic port — not the relay `/_readiness`
 - Default listener action stays the relay
@@ -243,7 +260,9 @@ Public URL for Wallet: **`INDEXER_URL=https://markets.bitcoinmarkets.app`**.
 
 ### Turning it on
 
-Adrien applies AWS after the PR merges. Order matters — bootstrap first.
+CEO applies AWS with `--profile alc` when ready (this repo does not apply).
+Order matters — bootstrap first. Keep `indexer_enabled = false` until the image
+is actually in ECR.
 
 1. **Apply the bootstrap stack** (separate state; CI never applies it):
 
@@ -251,24 +270,32 @@ Adrien applies AWS after the PR merges. Order matters — bootstrap first.
    terraform -chdir=infra/aws/bootstrap apply
    ```
 
-   Grants `iam:PassRole` on `buzz-dev-indexer-execution` / `buzz-dev-indexer-task`
-   and denies the deploy role `GetSecretValue` on `buzz-dev/indexer`.
-2. **Enable resources with `desired_count = 0`** so the secret and roles exist
+   Creates `buzz-dev-indexer-ecr-push` (OIDC trust:
+   `repo:adrienlacombe/the-situation-sdk:ref:refs/heads/main` only), grants
+   `iam:PassRole` on `buzz-dev-indexer-execution` / `buzz-dev-indexer-task`, and
+   denies the deploy role `GetSecretValue` on `buzz-dev/indexer`. The buzz
+   deploy role is not assumable by the-situation-sdk.
+2. **Main stack creates ECR** `buzz-dev-indexer` on apply even while the
+   indexer is disabled (CD after merge, or a local apply). Then the SDK
+   workflow on `main` pushes, assuming
+   `arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push`. Copy the
+   resulting immutable tag + digest.
+3. **Enable resources with `desired_count = 0`** so the secret and roles exist
    without a crash-looping task:
 
    ```hcl
    indexer_enabled       = true
    indexer_desired_count = 0
-   indexer_image         = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+   indexer_image         = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<immutable>@sha256:<digest>"
    ```
 
-   (Also tagged `:sha-94279a1`; Terraform must use the tag@digest form above.)
-   Apply the main stack with the usual `relay_image` pin.
-3. **Populate the unmanaged secret** (keys only here — never commit values):
+   Apply the main stack with the usual `relay_image` pin. Do not leave a GHCR
+   URI here.
+4. **Populate the unmanaged secret** (keys only here — never commit values):
 
    ```bash
    aws secretsmanager put-secret-value \
-     --profile alc-tf --region eu-west-3 \
+     --profile alc --region eu-west-3 \
      --secret-id "buzz-dev/indexer" \
      --secret-string '{"ADMIN_API_KEY":"<offline>","VOYAGER_API_KEY":"<voyager>"}'
    ```
@@ -276,10 +303,11 @@ Adrien applies AWS after the PR merges. Order matters — bootstrap first.
    `VOYAGER_API_KEY` (or `VOYAGER_API_KEYS`) is required to *start* in 0.19.1.
    A dummy is enough for `GET /api/markets` after an admin POST — that route is
    SQLite only. A real Voyager key is needed for event poll.
-4. Set `indexer_desired_count = 1` and apply again. The indexer ECS service does
+5. Set `indexer_desired_count = 1` and apply again. The indexer ECS service does
    **not** use `ignore_changes = [desired_count]` (unlike paymaster), so this
    apply actually scales the service to one task.
-5. **After the task is healthy — register the v1 market** (not automated in Terraform):
+6. **After the task is healthy — register the v1 market** (operator step, not
+   automated in Terraform; not part of enabling this PR):
 
    ```bash
    curl -X POST https://markets.bitcoinmarkets.app/admin/markets \
@@ -298,7 +326,7 @@ Adrien applies AWS after the PR merges. Order matters — bootstrap first.
    Listing copy says BTC. Do not put Starknet / Cairo / STRK in the title or
    description. This is `markets.bitcoinmarkets.app`, not an sslip.io host.
 
-6. Point Wallet at `INDEXER_URL=https://markets.bitcoinmarkets.app`.
+7. Point Wallet at `INDEXER_URL=https://markets.bitcoinmarkets.app`.
 
 ## Decisions worth knowing before changing them
 
@@ -383,7 +411,12 @@ credentials; there is no access key to leak or rotate. The role gets
 `PowerUserAccess` plus an IAM policy scoped by ARN to `buzz-*` names (not
 `IAMFullAccess`), and is explicitly **denied** `secretsmanager:GetSecretValue` on
 the relay identity secret — which is why `secrets.tf` deliberately does not
-manage that secret's version.
+manage that secret's version. The same Deny list covers the paymaster and
+indexer secrets. A second bootstrap role, `buzz-dev-indexer-ecr-push`, is
+assumable only by `repo:adrienlacombe/the-situation-sdk:ref:refs/heads/main`
+and may only push to ECR `buzz-dev-indexer` — no PowerUser, PassRole, or
+Secrets Manager. CD is denied `iam:*` on both roles
+(`NeverLetCdTouchItsOwnCredentials`).
 
 **Rollback is ECS-native.** `deployment_circuit_breaker { rollback = true }` in
 `ecs.tf` reverts a task definition that never stabilises, covering deploys

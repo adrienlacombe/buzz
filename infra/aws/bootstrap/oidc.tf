@@ -58,6 +58,12 @@ locals {
 
   # Indexer ADMIN_API_KEY / VOYAGER_API_KEY — unmanaged version, never CI's to read.
   indexer_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/indexer-*"
+
+  # Reconstructed by name — same no-remote-state style as the PassRole ARNs above.
+  # Lives in the main stack as aws_ecr_repository.indexer (../ecr.tf), always
+  # present even while indexer_enabled=false. Name is buzz-dev-indexer; do not
+  # confuse with bim-indexer (different product in this account).
+  indexer_ecr_repository_arn = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${local.name}-indexer"
 }
 
 variable "project_name" {
@@ -107,6 +113,34 @@ variable "github_oidc_sub_prefix_immutable" {
   EOT
   type        = string
   default     = "repo:adrienlacombe@6303520/buzz@1317096209"
+}
+
+variable "indexer_ecr_push_github_repository" {
+  description = "owner/repo allowed to assume the indexer ECR push role via OIDC. Not the buzz deploy repo."
+  type        = string
+  default     = "adrienlacombe/the-situation-sdk"
+}
+
+variable "indexer_ecr_push_github_branch" {
+  description = "Only this branch of the-situation-sdk may push indexer images. No PR branches."
+  type        = string
+  default     = "main"
+}
+
+variable "indexer_ecr_push_oidc_sub_prefix_immutable" {
+  description = <<-EOT
+    GitHub's ID-based OIDC subject prefix for the-situation-sdk, same form as
+    github_oidc_sub_prefix_immutable ("repo:<owner>@<account_id>/<repo>@<repo_id>").
+
+    Default is "" (name-based trust only). Discover the live ID form with:
+
+      gh api repos/adrienlacombe/the-situation-sdk/actions/oidc/customization/sub
+
+    and set it here so both forms are trusted — same silent-failure mode as the
+    buzz deploy role if GitHub presents the ID claim and we only trust the name.
+  EOT
+  type        = string
+  default     = ""
 }
 
 # A data source, not a resource: this account already has
@@ -226,11 +260,17 @@ resource "aws_iam_role_policy" "github_actions_iam" {
         # role/${var.project_name}-* above and could revert its own trust policy
         # or strip its own permissions, which is exactly the deadlock that moved
         # this file here. Deny beats Allow unconditionally.
+        #
+        # The indexer ECR push role is listed too: its name matches
+        # role/${var.project_name}-*, and a compromised buzz workflow must not be
+        # able to rewrite who may push images into buzz-dev-indexer (or grant
+        # itself that privilege). the-situation-sdk alone assumes that role.
         Sid    = "NeverLetCdTouchItsOwnCredentials"
         Effect = "Deny"
         Action = ["iam:*"]
         Resource = [
           aws_iam_role.github_actions.arn,
+          aws_iam_role.indexer_ecr_push.arn,
         ]
       },
       {
@@ -299,4 +339,93 @@ resource "aws_iam_role_policy" "github_actions_iam" {
 output "github_actions_role_arn" {
   description = "Role ARN for aws-actions/configure-aws-credentials in deploy-aws.yml."
   value       = aws_iam_role.github_actions.arn
+}
+
+# ── Indexer ECR push (the-situation-sdk → buzz-dev-indexer) ──────────────────
+#
+# Dedicated role. NOT the PowerUser buzz-dev-github-actions deploy role, and not
+# assumable by the buzz repo. the-situation-sdk stays private; Fine-grained PATs
+# cannot push to GitHub Packages, and we will not mint a classic PAT or a GHCR
+# pull secret. Durable path: SDK workflow assumes this role and pushes to ECR;
+# ECS then pulls with AmazonECSTaskExecutionRolePolicy alone (IAM, no registry
+# credentials).
+#
+# Hardcoded ARN for the sibling SDK workflow (account + name are stable):
+#   arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push
+
+data "aws_iam_policy_document" "indexer_ecr_push_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    # Exact matches only — no wildcards, no PR refs, no buzz repo on this role.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values = compact([
+        "repo:${var.indexer_ecr_push_github_repository}:ref:refs/heads/${var.indexer_ecr_push_github_branch}",
+        var.indexer_ecr_push_oidc_sub_prefix_immutable != ""
+        ? "${var.indexer_ecr_push_oidc_sub_prefix_immutable}:ref:refs/heads/${var.indexer_ecr_push_github_branch}"
+        : "",
+      ])
+    }
+  }
+}
+
+resource "aws_iam_role" "indexer_ecr_push" {
+  name        = "${local.name}-indexer-ecr-push"
+  description = "Assumed by the-situation-sdk Actions on main to push the markets indexer image to ECR"
+
+  assume_role_policy   = data.aws_iam_policy_document.indexer_ecr_push_assume_role.json
+  max_session_duration = 3600
+
+  tags = { Name = "${local.name}-indexer-ecr-push" }
+}
+
+# ECR push only. No PowerUser, no PassRole, no Secrets Manager.
+resource "aws_iam_role_policy" "indexer_ecr_push" {
+  name = "push-indexer-ecr"
+  role = aws_iam_role.indexer_ecr_push.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "GetAuthorizationToken"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PushToIndexerRepository"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+        ]
+        Resource = [local.indexer_ecr_repository_arn]
+      },
+    ]
+  })
+}
+
+output "indexer_ecr_push_role_arn" {
+  description = "Role ARN the-situation-sdk Actions assumes to push buzz-dev-indexer. Hardcode in the SDK workflow: arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push"
+  value       = aws_iam_role.indexer_ecr_push.arn
 }
