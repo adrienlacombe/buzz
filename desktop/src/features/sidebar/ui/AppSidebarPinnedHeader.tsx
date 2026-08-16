@@ -19,6 +19,7 @@ type SidebarSelectedView =
   | "agents"
   | "workflows"
   | "pulse"
+  | "markets"
   | "projects";
 
 type AppSidebarPinnedHeaderProps = {
@@ -41,6 +42,7 @@ type AppSidebarPrimaryMenuProps = {
   homeBadgeCount: number;
   onSelectAgents: () => void;
   onSelectHome: () => void;
+  onSelectMarkets: () => void;
   onSelectProjects: () => void;
   onSelectPulse: () => void;
   onSelectWorkflows: () => void;
@@ -90,6 +92,7 @@ export function AppSidebarPrimaryMenu({
   homeBadgeCount,
   onSelectAgents,
   onSelectHome,
+  onSelectMarkets,
   onSelectProjects,
   onSelectPulse,
   onSelectWorkflows,
@@ -129,6 +132,18 @@ export function AppSidebarPrimaryMenu({
               {Math.min(homeBadgeCount, 99)}
             </SidebarMenuBadge>
           ) : null}
+        </SidebarMenuItem>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            data-testid="open-markets-view"
+            isActive={selectedView === "markets"}
+            onClick={onSelectMarkets}
+            tooltip="Markets"
+            type="button"
+          >
+            <Zap className="h-4 w-4" />
+            <SidebarMenuLabel>Markets</SidebarMenuLabel>
+          </SidebarMenuButton>
         </SidebarMenuItem>
         <FeatureGate feature="pulse">
           <SidebarMenuItem>

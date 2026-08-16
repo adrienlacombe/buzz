@@ -42,6 +42,8 @@ pub mod relay;
 pub mod sponsorship;
 /// Address derivation for Nostr-key-controlled Starknet accounts.
 pub mod starknet_account;
+/// Bitcoin Markets wallet fee, retarget halt, and human-only account gate.
+pub mod markets;
 /// Tenant identity — the server-resolved community key carried on scoped paths.
 pub mod tenant;
 /// Schnorr signature and event ID verification.

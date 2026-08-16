@@ -84,7 +84,14 @@
     "upng-js": "^2.1.0",
     "virtua": "0.49.3",
     "yaml": "^2.8.3",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@the-situation/artifacts": "^0.15.0",
+    "@the-situation/collateral": "^0.12.1",
+    "@the-situation/core": "^0.12.0",
+    "@the-situation/utils": "^0.13.0",
+    "@atomiqlabs/sdk": "^8.9.6",
+    "@atomiqlabs/chain-starknet": "^8.6.0",
+    "starknet": "^9.2.1"
   },
   "devDependencies": {
     "@noble/hashes": "^2.0.1",

@@ -67,15 +67,18 @@ COPY --from=planner /build/recipe.json recipe.json
 # scoping to -p buzz-relay misses transitive deps and re-builds them later.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-# FORK-LOCAL PATCH (adrienlacombe/buzz): buzz-paymaster ships in this image rather
-# than one of its own. A second image would need a second publish workflow, and
-# deploy-aws.yml pins the commit's immutable :sha-<7> tag — so it would have to wait
-# on both pipelines or fall back to a floating tag, losing the property the deploy
-# depends on. One line here is cheaper than that. The paymaster is not the ENTRYPOINT;
-# its ECS task overrides `command`.
+# FORK-LOCAL PATCH (adrienlacombe/buzz): buzz-paymaster and buzz-avnu-proxy ship
+# in this image rather than ones of their own. A second image would need a second
+# publish workflow, and deploy-aws.yml pins the commit's immutable :sha-<7> tag —
+# so it would have to wait on both pipelines or fall back to a floating tag,
+# losing the property the deploy depends on. Neither is the ENTRYPOINT; their
+# ECS tasks override `command`.
+# buzz-avnu-proxy holds AVNU_API_KEY server-side — never bake the key into the
+# image; inject it at runtime from secrets.
 RUN cargo build --release --locked -p buzz-relay --bin buzz-relay \
                                    -p buzz-admin --bin buzz-admin \
                                    -p buzz-paymaster --bin buzz-paymaster \
+                                   -p buzz-avnu-proxy --bin buzz-avnu-proxy \
                                    -p buzz-pair-relay --bin buzz-pair-relay
 
 # Derive the normal release binaries from the same optimized ELF files as the
@@ -84,6 +87,7 @@ FROM builder AS stripped-binaries
 RUN strip target/release/buzz-relay \
     && strip target/release/buzz-admin \
     && strip target/release/buzz-paymaster \
+    && strip target/release/buzz-avnu-proxy \
     && strip target/release/buzz-pair-relay
 
 # ─── Stage 4: web bundle (pnpm + vite) ──────────────────────────────────────
@@ -178,6 +182,7 @@ COPY --from=builder /build/target/release/buzz-relay /usr/local/bin/buzz-relay
 COPY --from=builder /build/target/release/buzz-admin /usr/local/bin/buzz-admin
 # FORK-LOCAL PATCH (adrienlacombe/buzz): see the cargo build step above.
 COPY --from=builder /build/target/release/buzz-paymaster /usr/local/bin/buzz-paymaster
+COPY --from=builder /build/target/release/buzz-avnu-proxy /usr/local/bin/buzz-avnu-proxy
 COPY --from=builder /build/target/release/buzz-pair-relay /usr/local/bin/buzz-pair-relay
 
 # Keep the stripped runtime as the final/default Dockerfile target so existing
@@ -187,4 +192,5 @@ COPY --from=stripped-binaries /build/target/release/buzz-relay /usr/local/bin/bu
 COPY --from=stripped-binaries /build/target/release/buzz-admin /usr/local/bin/buzz-admin
 # FORK-LOCAL PATCH (adrienlacombe/buzz): see the cargo build step above.
 COPY --from=stripped-binaries /build/target/release/buzz-paymaster /usr/local/bin/buzz-paymaster
+COPY --from=stripped-binaries /build/target/release/buzz-avnu-proxy /usr/local/bin/buzz-avnu-proxy
 COPY --from=stripped-binaries /build/target/release/buzz-pair-relay /usr/local/bin/buzz-pair-relay
