@@ -5,7 +5,11 @@
  * deploy, paymaster). Collateral is always labeled “BTC”.
  */
 
-/** Product indexer host. Override with `VITE_INDEXER_URL` / `INDEXER_URL`. */
+/**
+ * Product indexer host on `bitcoinmarkets.app`.
+ * Required deploy env: `INDEXER_URL=https://markets.bitcoinmarkets.app`
+ * (no localhost default; never ship `http://127.0.0.1:8787`).
+ */
 export const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
 
 /** Live LOGNORMAL difficulty market (raw difficulty axis). */

@@ -19,12 +19,11 @@
 //!                       Test:    https://sepolia.paymaster.avnu.fi
 //! BIND_ADDR             Listen address. Default: 0.0.0.0:8788
 //!
-//! INDEXER_URL           Product market indexer base URL. Required for deploy
-//!                       of listing clients; production value is
-//!                       https://markets.bitcoinmarkets.app
+//! INDEXER_URL           Required env for listing clients (no localhost
+//!                       default). Production: https://markets.bitcoinmarkets.app
 //!                       (GET {INDEXER_URL}/api/markets, GET {INDEXER_URL}/health).
-//!                       Do NOT default this to http://127.0.0.1:8787 — loopback
-//!                       is listing-proof only.
+//!                       Do NOT ship http://127.0.0.1:8787. Hostname is locked
+//!                       while Markets adds the service in infra/aws.
 //! ```
 
 use axum::{
@@ -89,7 +88,7 @@ async fn main() -> Result<(), BootError> {
             warn!(
                 indexer_url = %url,
                 product = PRODUCT_INDEXER_URL,
-                "INDEXER_URL points at loopback; production is https://markets.bitcoinmarkets.app"
+                "INDEXER_URL points at loopback; required product host is https://markets.bitcoinmarkets.app (no localhost default)"
             );
         }
         Ok(url) => info!(indexer_url = %url, "INDEXER_URL set"),

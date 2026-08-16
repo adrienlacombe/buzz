@@ -3,9 +3,11 @@ import { PRODUCT_INDEXER_URL } from "./constants";
 /**
  * Resolve the markets indexer base URL.
  *
- * Production host is `https://markets.bitcoinmarkets.app`. Loopback
- * (`127.0.0.1` / `localhost`) is listing-proof only and must never ship as the
- * client default.
+ * Required product host: `https://markets.bitcoinmarkets.app` (domain
+ * `bitcoinmarkets.app`). Prefer `VITE_INDEXER_URL` / `INDEXER_URL`; when unset,
+ * use the product constant — never invent `http://127.0.0.1:8787`. Loopback is
+ * listing-proof only and is refused. Hostname stays locked while Markets adds
+ * the service in `infra/aws` and DNS propagates.
  */
 export function resolveIndexerUrl(
   env: Record<string, string | undefined> = import.meta.env as Record<
@@ -20,7 +22,7 @@ export function resolveIndexerUrl(
   const base = raw.replace(/\/$/, "");
   if (/127\.0\.0\.1|localhost/i.test(base)) {
     throw new Error(
-      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app",
+      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app (required env, no localhost default)",
     );
   }
   return base;

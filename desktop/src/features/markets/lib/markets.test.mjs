@@ -32,7 +32,7 @@ function resolveIndexerUrl(env = {}) {
   const base = raw.replace(/\/$/, "");
   if (/127\.0\.0\.1|localhost/i.test(base)) {
     throw new Error(
-      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app",
+      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app (required env, no localhost default)",
     );
   }
   return base;

@@ -34,7 +34,9 @@ height (every 2016 blocks).
 
 ## INDEXER_URL
 
-Required for deploy. Production:
+Required env for deploy — **no localhost default**. Product host on
+`bitcoinmarkets.app` (locked even while Markets wires the service in
+`infra/aws` and DNS is still propagating):
 
 ```text
 INDEXER_URL=https://markets.bitcoinmarkets.app
@@ -43,9 +45,9 @@ INDEXER_URL=https://markets.bitcoinmarkets.app
 - `GET {INDEXER_URL}/api/markets`
 - `GET {INDEXER_URL}/health`
 
-Never ship a loopback default (`http://127.0.0.1:8787` is listing-proof only).
-The desktop client uses the product host above (overridable via
-`VITE_INDEXER_URL` / `INDEXER_URL`) and refuses loopback.
+Do not ship `http://127.0.0.1:8787` (listing-proof only). The desktop client
+uses the product host above (overridable via `VITE_INDEXER_URL` /
+`INDEXER_URL`) and refuses loopback.
 
 ## AVNU_API_KEY
 

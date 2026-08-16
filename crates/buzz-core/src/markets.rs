@@ -38,8 +38,18 @@ pub const RETARGET_INTERVAL: u64 = 2016;
 /// Halt betting this many blocks before the next retarget height.
 pub const HALT_BLOCKS_BEFORE_RETARGET: u64 = 24;
 
-/// Product indexer host. Clients read `INDEXER_URL` (required in deploy) and
-/// must never fall back to loopback — localhost is listing-proof only.
+/// Product indexer host on `bitcoinmarkets.app`.
+///
+/// Deploy must set `INDEXER_URL` to this value. Clients may fall back to the
+/// constant when the env is unset, but must **never** invent
+/// `http://127.0.0.1:8787` (loopback is listing-proof only).
+///
+/// Listing endpoints:
+/// - `GET {INDEXER_URL}/api/markets`
+/// - `GET {INDEXER_URL}/health`
+///
+/// Hostname is locked even while DNS for the Markets service in `infra/aws`
+/// is still propagating.
 pub const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
 
 /// Keyring entry name for the human identity nsec.
@@ -54,6 +64,12 @@ pub enum MarketsError {
     /// A keyring name was empty or malformed.
     #[error("invalid keyring name: {0}")]
     InvalidKeyringName(String),
+    /// `INDEXER_URL` pointed at loopback; product host is required.
+    #[error(
+        "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app \
+         (required env, no localhost default)"
+    )]
+    IndexerUrlLoopback,
 }
 
 /// Computes the wallet fee for a trade collateral amount.
@@ -130,6 +146,29 @@ pub fn assert_human_keyring_name(name: &str) -> Result<(), MarketsError> {
 #[must_use]
 pub fn is_human_keyring_name(name: &str) -> bool {
     assert_human_keyring_name(name).is_ok()
+}
+
+/// Resolve the markets indexer base URL.
+///
+/// Prefer `INDEXER_URL` from the environment (required in deploy). When unset,
+/// use [`PRODUCT_INDEXER_URL`] (`https://markets.bitcoinmarkets.app`). Never
+/// invent `http://127.0.0.1:8787` — loopback is listing-proof only and is
+/// refused if an operator sets it.
+pub fn resolve_indexer_url() -> Result<String, MarketsError> {
+    resolve_indexer_url_from(std::env::var("INDEXER_URL").ok().as_deref())
+}
+
+/// Resolve from an optional raw env value (tests / callers that already read env).
+pub fn resolve_indexer_url_from(raw: Option<&str>) -> Result<String, MarketsError> {
+    let chosen = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(PRODUCT_INDEXER_URL);
+    let base = chosen.trim_end_matches('/');
+    if base.contains("127.0.0.1") || base.to_ascii_lowercase().contains("localhost") {
+        return Err(MarketsError::IndexerUrlLoopback);
+    }
+    Ok(base.to_string())
 }
 
 #[cfg(test)]
@@ -214,5 +253,21 @@ mod tests {
         assert!(!PRODUCT_INDEXER_URL.contains("127.0.0.1"));
         assert!(!PRODUCT_INDEXER_URL.contains("localhost"));
         assert_eq!(PRODUCT_INDEXER_URL, "https://markets.bitcoinmarkets.app");
+        assert_eq!(
+            resolve_indexer_url_from(None).unwrap(),
+            PRODUCT_INDEXER_URL
+        );
+        assert_eq!(
+            resolve_indexer_url_from(Some("https://markets.bitcoinmarkets.app/")).unwrap(),
+            "https://markets.bitcoinmarkets.app"
+        );
+        assert_eq!(
+            resolve_indexer_url_from(Some("http://127.0.0.1:8787")),
+            Err(MarketsError::IndexerUrlLoopback)
+        );
+        assert_eq!(
+            resolve_indexer_url_from(Some("http://localhost:8787")),
+            Err(MarketsError::IndexerUrlLoopback)
+        );
     }
 }

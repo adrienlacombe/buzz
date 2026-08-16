@@ -1,19 +1,21 @@
 # Markets indexer (listing)
-
-# Hostname is locked for the Bitcoin Markets product:
-#   https://markets.bitcoinmarkets.app
 #
-# Clients read INDEXER_URL (required in deploy). Production value:
+# Markets is adding this service in infra/aws. Hostname is locked even if DNS
+# is still propagating:
+#
+#   https://markets.bitcoinmarkets.app
+#   (domain: bitcoinmarkets.app)
+#
+# Clients use required env INDEXER_URL — no localhost default. Production value:
+#
 #   INDEXER_URL=https://markets.bitcoinmarkets.app
 #
-# Endpoints:
-#   GET {INDEXER_URL}/health
+# Listing:
 #   GET {INDEXER_URL}/api/markets
+#   GET {INDEXER_URL}/health
 #
-# Never default INDEXER_URL to http://127.0.0.1:8787 — loopback is
-# listing-proof only. Infra wiring for the indexer service lands here;
-# the hostname above is stable even while DNS propagates.
-
-# Placeholder: ECS/service modules for the indexer will be added alongside
-# the existing relay/paymaster stacks. Until then, point INDEXER_URL at the
-# product host above.
+# Do not ship http://127.0.0.1:8787 — loopback is listing-proof only.
+#
+# Placeholder: ECS/ALB/Route53 modules for the indexer land here alongside the
+# existing relay/paymaster stacks. Until Terraform creates the record, clients
+# still point INDEXER_URL at the locked product host above.

@@ -10,8 +10,8 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    assert_human_keyring_name, betting_halted, wallet_fee_amount, HUMAN_IDENTITY_KEYRING_NAME,
-    NOSTR_ACCOUNT_CLASS_HASH, PRODUCT_INDEXER_URL,
+    assert_human_keyring_name, betting_halted, resolve_indexer_url, wallet_fee_amount,
+    HUMAN_IDENTITY_KEYRING_NAME, NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
     any_caller, OutsideCall, OutsideExecution,
@@ -252,8 +252,7 @@ pub async fn fund_lightning(
         class_hash: NOSTR_ACCOUNT_CLASS_HASH.to_string(),
         constructor_calldata: ctor.iter().map(|f| f.to_fixed_hex_string()).collect(),
         salt: DEPLOY_SALT.to_fixed_hex_string(),
-        indexer_url: std::env::var("INDEXER_URL")
-            .unwrap_or_else(|_| PRODUCT_INDEXER_URL.to_string()),
+        indexer_url: resolve_indexer_url().map_err(|e| e.to_string())?,
     })
 }
 
