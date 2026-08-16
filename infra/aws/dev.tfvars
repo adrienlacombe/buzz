@@ -104,43 +104,40 @@ paymaster_desired_count = 0
 # paymaster_account_class_hash = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537"
 
 # ── Markets indexer (@the-situation/indexer) ─────────────────────────────────
-# Disabled. indexer_enabled = false means **no ECS/IAM/EFS/secret resources** —
-# same lesson as paymaster: half-adding IAM roles without bootstrap PassRole
-# breaks relay CD. The ECR repo (ecr.tf, buzz-dev-indexer) is always created so
-# the-situation-sdk can push before enabling; do not confuse with bim-indexer.
+# ENABLED and already live in eu-west-3 (account 618867225791). These values
+# must stay in sync with AWS: the next GitHub Actions terraform apply would
+# otherwise plan a destroy of the indexer stack. EFS has prevent_destroy, so
+# that apply would fail and block relay CD. Do NOT set indexer_enabled = false
+# here while the stack exists.
 #
-# Once enabled, setting indexer_enabled = false fails plan (EFS prevent_destroy)
-# so CD cannot wipe the markets SQLite. That is intentional. To disable after
-# enable: terraform state rm 'aws_efs_file_system.indexer[0]' first (and accept
-# losing the count-gated resources). Not a silent destroy of an existing DB.
+# To disable after enable: terraform state rm 'aws_efs_file_system.indexer[0]'
+# first (and accept losing the count-gated resources). Not a silent destroy of
+# an existing DB.
 #
 # Image path is Amazon ECR + IAM only. No GHCR pull secret, no classic PAT, no
 # making the-situation-sdk public. SDK workflow assumes
-# arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push.
+# arn:aws:iam::618867225791:role/buzz-dev-indexer-ecr-push. Pin URI@digest —
+# rejects :main / :latest. Do NOT reuse relay_image. Do not use a GHCR pin.
 #
-# Turning it on, in this order (CEO applies with --profile alc when ready):
+# Enable order already completed (do not re-run as if greenfield):
 #
-#   1. terraform -chdir=infra/aws/bootstrap apply
-#      (creates buzz-dev-indexer-ecr-push; PassRole on indexer roles +
-#       GetSecretValue Deny on buzz-dev/indexer)
-#   2. Main stack apply creates ECR buzz-dev-indexer (even while disabled).
-#      SDK workflow on main pushes; copy the resulting URI@digest.
-#   3. Set indexer_enabled = true, indexer_desired_count = 0, and pin:
-#        indexer_image = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<immutable>@sha256:<digest>"
-#      Rejects :main / :latest. Do NOT reuse relay_image. Do not use a GHCR pin.
-#   4. put-secret-value ADMIN_API_KEY + VOYAGER_API_KEY with --profile alc
-#      (keys only in docs — see indexer.tf / README). Never commit values.
-#   5. Set indexer_desired_count = 1 and apply again (indexer service does NOT
-#      ignore_changes desired_count — unlike paymaster — so this apply works).
-#   6. POST /admin/markets for the v1 market (payload in README) — operator step
-#      after healthy, not part of this Terraform change.
+#   1. bootstrap/ applied (buzz-dev-indexer-ecr-push; PassRole + GetSecretValue
+#      Deny on buzz-dev/indexer).
+#   2. Main stack + ECR buzz-dev-indexer; SDK workflow pushed the image below.
+#   3. indexer_enabled / desired_count / image pinned to match live state.
+#   4. buzz-dev/indexer secret populated out-of-band (ADMIN_API_KEY + dummy
+#      VOYAGER_API_KEY). Dummy Voyager is enough to boot; event poll needs a
+#      real key later. Never commit secret values.
+#   5. Service at desired_count = 1 → https://markets.bitcoinmarkets.app
+#   6. POST /admin/markets for the v1 market — still an operator step after
+#      healthy; not part of aligning tfvars with live state.
 #   7. Wallet INDEXER_URL = https://markets.bitcoinmarkets.app
 #
 # ACM already has a markets.bitcoinmarkets.app SAN. Route53 A alias + ALB
-# host-header rule appear only when enabled.
-indexer_enabled       = false
-indexer_desired_count = 0
-# indexer_image = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:<immutable>@sha256:<digest>"
+# host-header rule exist when enabled.
+indexer_enabled       = true
+indexer_desired_count = 1
+indexer_image         = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:0.19.1@sha256:30915371ba5100dc73ebf2190fef0f384aad512fd8b0861ed942c6f71fd6c5e5"
 
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14
