@@ -49,11 +49,12 @@ RDS subnet group requires ≥2. "Single-AZ" refers to the RDS and Redis instance
 | `efs.tf` | Git volume + access point |
 | `secrets.tf` | Secrets Manager: `runtime` and `relay-identity` |
 | `alb.tf` | ALB, relay target group, listeners (default action = relay) |
-| `dns.tf` | ACM cert (relay + markets SAN), validation records, alias records |
+| `dns.tf` | ACM cert (relay + markets + paymaster SANs), validation records, alias records |
 | `ecs.tf` | Cluster, IAM roles, task definition, service |
-| `paymaster.tf` | **Whole** `buzz-paymaster` service — its own SG, IAM roles and secret. Off by default |
+| `paymaster.tf` | **Whole** `buzz-paymaster` service — its own SG, IAM roles and secret. Off by default. Egress-only Nostr/STRK sponsor — **not** the AVNU proxy |
 | `ecr.tf` | Markets indexer ECR repository (`buzz-dev-indexer`) — always created; no PassRole surface |
 | `indexer.tf` | **Whole** markets indexer (`@the-situation/indexer`) — own SG, IAM, secret, EFS, TG, host-header rule. Off by default |
+| `avnu-proxy.tf` | **Whole** `buzz-avnu-proxy` — public HTTPS at `paymaster.<domain>`, ALB host-header, own SG/IAM/secret. Uses `var.relay_image`. Off by default |
 | `oidc.tf` | GitHub Actions deploy role + indexer ECR push role (OIDC) — lives under `bootstrap/` |
 | `outputs.tf` | URLs, endpoints, next-step commands |
 | `dev.tfvars` | **Committed** config for the dev environment (no secrets) |
@@ -328,6 +329,100 @@ is actually in ECR.
 
 7. Point Wallet at `INDEXER_URL=https://markets.bitcoinmarkets.app`.
 
+## AVNU proxy (`buzz-avnu-proxy` at `paymaster.bitcoinmarkets.app`)
+
+Off by default and safe to ignore until you want it. `avnu_proxy_enabled = false`
+means **no ECS/IAM/secret/TG resources on the create path**, same count-gating
+lesson as paymaster/indexer.
+
+**This is not `paymaster.tf`.** That file is the old Nostr/STRK sponsor
+(`buzz-paymaster`): egress-only, no inbound, wrong product for AVNU sponsored
+transactions. Leave `paymaster_enabled = false`. The hostname
+`paymaster.bitcoinmarkets.app` is product naming for this HTTP proxy.
+
+Why it exists: AVNU `paymaster_buildTransaction` already succeeded via a
+loopback proxy, but shipped clients refuse `AVNU_PROXY_URL` loopback
+(`crates/buzz-core/src/markets.rs` `resolve_avnu_proxy_url`). Host a public
+proxy so the client can call it; `AVNU_API_KEY` stays server-side. Never bake
+the key into the image, repo, or client.
+
+**Image is `var.relay_image`.** The binary ships in the relay image at
+`/usr/local/bin/buzz-avnu-proxy` (Dockerfile already builds and copies it).
+ECS overrides `command` to that binary. There is deliberately no separate
+image variable — CD already passes `relay_image` on every apply, so one pin
+covers both the relay and this proxy. Do not invent a second writer that could
+un-pin CD (indexer needs its own ECR image because it is a different artefact;
+this does not).
+
+It is an HTTP service on port **8788**, following the indexer ingress pattern
+(not paymaster egress-only):
+
+- Own security group: ingress from the ALB on 8788 only
+- Own Secrets Manager secret (`buzz-dev/avnu-proxy`) for `AVNU_API_KEY` and
+  `PROXY_AUTH_TOKEN` — unmanaged version; **already exists in AWS** — import
+  on first enable (no `aws_secretsmanager_secret_version`)
+- ALB HTTPS listener rule (priority 110): host-header
+  `paymaster.bitcoinmarkets.app` → avnu-proxy TG
+- Health check `GET /health` → `{"status":"ok","service":"buzz-avnu-proxy"}`
+- JSON-RPC: `POST /` and `POST /rpc` (Bearer `PROXY_AUTH_TOKEN` required —
+  `BIND_ADDR=0.0.0.0:8788` is non-loopback)
+- Default listener action stays the relay
+
+The shared ACM certificate carries a SAN for `paymaster.bitcoinmarkets.app`
+even while the service is off (so enabling does not wait on a cert
+replacement). The Route53 A alias and listener rule appear only when
+`avnu_proxy_enabled` is true.
+
+Public URL for Wallet (after the host is live — not set in this stack PR):
+**`AVNU_PROXY_URL=https://paymaster.bitcoinmarkets.app`**.
+
+### Turning it on
+
+Operator applies AWS after merge (this repo does not apply in CI for optional
+services). Order matters — bootstrap first. Keep `avnu_proxy_enabled = false`
+in committed tfvars until you are ready.
+
+1. **Apply the bootstrap stack** (separate state; CI never applies it):
+
+   ```bash
+   terraform -chdir=infra/aws/bootstrap apply
+   ```
+
+   Grants `iam:PassRole` on `buzz-dev-avnu-proxy-execution` /
+   `buzz-dev-avnu-proxy-task`, and denies the deploy role `GetSecretValue` on
+   `buzz-dev/avnu-proxy`.
+2. **Enable resources with `desired_count = 0`**:
+
+   ```hcl
+   avnu_proxy_enabled       = true
+   avnu_proxy_desired_count = 0
+   ```
+
+3. **Import the existing secret** (look up the live ARN at apply time — do not
+   hardcode the random suffix; name `buzz-dev/avnu-proxy`, account
+   `618867225791`, region `eu-west-3`; ARN suffix was `-d4y5BS` at authoring
+   time but verify):
+
+   ```bash
+   ARN=$(aws secretsmanager describe-secret \
+     --profile alc --region eu-west-3 \
+     --secret-id buzz-dev/avnu-proxy \
+     --query ARN --output text)
+   IMAGE=$(aws ecs describe-task-definition --task-definition buzz-dev-relay \
+     --profile alc-tf --region eu-west-3 \
+     --query 'taskDefinition.containerDefinitions[0].image' --output text)
+   terraform import -var-file=dev.tfvars -var relay_image="$IMAGE" \
+     'aws_secretsmanager_secret.avnu_proxy[0]' "$ARN"
+   ```
+
+4. Apply the main stack (creates SG, IAM, TG, listener rule, Route53, service
+   at desired_count 0) with the usual `relay_image` pin.
+5. Set `avnu_proxy_desired_count = 1` and apply again. The service does **not**
+   use `ignore_changes = [desired_count]` (unlike paymaster), so this apply
+   scales to one task.
+6. Point Wallet at `AVNU_PROXY_URL=https://paymaster.bitcoinmarkets.app`
+   (client/product change — not part of enabling Terraform).
+
 ## Decisions worth knowing before changing them
 
 **S3 uses a static IAM user key, not the ECS task role.** This looks like a
@@ -411,8 +506,8 @@ credentials; there is no access key to leak or rotate. The role gets
 `PowerUserAccess` plus an IAM policy scoped by ARN to `buzz-*` names (not
 `IAMFullAccess`), and is explicitly **denied** `secretsmanager:GetSecretValue` on
 the relay identity secret — which is why `secrets.tf` deliberately does not
-manage that secret's version. The same Deny list covers the paymaster and
-indexer secrets. A second bootstrap role, `buzz-dev-indexer-ecr-push`, is
+manage that secret's version. The same Deny list covers the paymaster,
+indexer, and avnu-proxy secrets. A second bootstrap role, `buzz-dev-indexer-ecr-push`, is
 assumable only by `repo:adrienlacombe/the-situation-sdk:ref:refs/heads/main`
 and may only push to ECR `buzz-dev-indexer` — no PowerUser, PassRole, or
 Secrets Manager. CD is denied `iam:*` on both roles
@@ -449,6 +544,11 @@ or points `buzz-cli` at a different relay.
 (required env or that public host). **No localhost default** — loopback was
 listing-proof only. Listing/health need no auth. Never commit `ADMIN_API_KEY`
 or `AVNU_API_KEY`. See `markets.tf.md`.
+
+**AVNU proxy.** Product `AVNU_PROXY_URL=https://paymaster.bitcoinmarkets.app`
+after the host is live (Wallet sets it — not desktop PRODUCT URLs in the
+Terraform PR). **No loopback** — clients refuse it. `AVNU_API_KEY` stays in
+`buzz-dev/avnu-proxy`. This is not `paymaster.tf`. See `avnu-proxy.tf`.
 
 **Who may use our relay — `require_relay_membership`.** Set it `true` in
 `dev.tfvars` and only pubkeys in the relay's membership table may use the relay;

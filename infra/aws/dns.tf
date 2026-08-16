@@ -16,8 +16,11 @@ data "aws_route53_zone" "main" {
 resource "aws_acm_certificate" "main" {
   count = local.enable_dns ? 1 : 0
 
-  domain_name               = local.relay_fqdn
-  subject_alternative_names = [local.markets_fqdn]
+  domain_name = local.relay_fqdn
+  # markets + paymaster SANs stay on the cert even while those services are
+  # off, so enabling either does not wait on a cert replacement.
+  # create_before_destroy already covers swapping when SANs change.
+  subject_alternative_names = [local.markets_fqdn, local.paymaster_fqdn]
   validation_method         = "DNS"
 
   tags = { Name = local.relay_fqdn }
@@ -83,6 +86,23 @@ resource "aws_route53_record" "markets" {
 
   zone_id = data.aws_route53_zone.main[0].zone_id
   name    = local.markets_fqdn
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.main.dns_name
+    zone_id                = aws_lb.main.zone_id
+    evaluate_target_health = true
+  }
+}
+
+# paymaster.<domain> → same ALB. Host-header rule in avnu-proxy.tf forwards to
+# the buzz-avnu-proxy target group (NOT paymaster.tf). Absent while
+# avnu_proxy_enabled is false for the same fall-through reason as markets.
+resource "aws_route53_record" "paymaster" {
+  count = local.enable_dns && var.avnu_proxy_enabled ? 1 : 0
+
+  zone_id = data.aws_route53_zone.main[0].zone_id
+  name    = local.paymaster_fqdn
   type    = "A"
 
   alias {

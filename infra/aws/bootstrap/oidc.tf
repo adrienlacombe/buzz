@@ -48,6 +48,12 @@ locals {
   indexer_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-indexer-execution"
   indexer_task_role_arn      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-indexer-task"
 
+  # Same pattern for buzz-avnu-proxy (../avnu-proxy.tf): own execution + task
+  # roles. NOT paymaster.tf — that is the egress-only Nostr/STRK sponsor.
+  # Apply bootstrap FIRST, then set avnu_proxy_enabled.
+  avnu_proxy_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-avnu-proxy-execution"
+  avnu_proxy_task_role_arn      = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-avnu-proxy-task"
+
   # Secrets Manager appends a random 6-character suffix, so the exact ARN is not
   # derivable from the name and this must be a prefix match.
   identity_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/relay-identity-*"
@@ -58,6 +64,10 @@ locals {
 
   # Indexer ADMIN_API_KEY / VOYAGER_API_KEY — unmanaged version, never CI's to read.
   indexer_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/indexer-*"
+
+  # AVNU_API_KEY / PROXY_AUTH_TOKEN for buzz-avnu-proxy — unmanaged version,
+  # never CI's to read. Secret already exists in AWS as buzz-dev/avnu-proxy.
+  avnu_proxy_secret_arn_pattern = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${local.name}/avnu-proxy-*"
 
   # Reconstructed by name — same no-remote-state style as the PassRole ARNs above.
   # Lives in the main stack as aws_ecr_repository.indexer (../ecr.tf), always
@@ -292,6 +302,8 @@ resource "aws_iam_role_policy" "github_actions_iam" {
           local.paymaster_task_role_arn,
           local.indexer_execution_role_arn,
           local.indexer_task_role_arn,
+          local.avnu_proxy_execution_role_arn,
+          local.avnu_proxy_task_role_arn,
         ]
         Condition = {
           StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" }
@@ -320,15 +332,17 @@ resource "aws_iam_role_policy" "github_actions_iam" {
       {
         # PowerUserAccess already allows secretsmanager:*, and CI legitimately
         # needs to manage the runtime secret. But the relay's identity key, the
-        # sponsor's Starknet signing key, and the indexer ADMIN_API_KEY are never
-        # CI's business, so reading them is denied outright — which is also why
-        # ../secrets.tf, ../paymaster.tf and ../indexer.tf deliberately do not
-        # manage those secrets' versions (Terraform reads a managed version back
-        # on every refresh, which would require the Get).
+        # sponsor's Starknet signing key, the indexer ADMIN_API_KEY, and the
+        # AVNU proxy keys are never CI's business, so reading them is denied
+        # outright — which is also why ../secrets.tf, ../paymaster.tf,
+        # ../indexer.tf and ../avnu-proxy.tf deliberately do not manage those
+        # secrets' versions (Terraform reads a managed version back on every
+        # refresh, which would require the Get).
         #
         # The paymaster entry is the one that matters most here: a workflow that
         # could read it could drain the sponsor's account, and every push to main
-        # assumes this role.
+        # assumes this role. The avnu-proxy entry is the same shape for
+        # AVNU_API_KEY / PROXY_AUTH_TOKEN.
         Sid    = "DenyIdentityAndSponsorKeyReads"
         Effect = "Deny"
         Action = ["secretsmanager:GetSecretValue"]
@@ -336,6 +350,7 @@ resource "aws_iam_role_policy" "github_actions_iam" {
           local.identity_secret_arn_pattern,
           local.paymaster_secret_arn_pattern,
           local.indexer_secret_arn_pattern,
+          local.avnu_proxy_secret_arn_pattern,
         ]
       },
     ]

@@ -63,6 +63,16 @@ output "indexer_secret_id" {
   value       = var.indexer_enabled ? aws_secretsmanager_secret.indexer[0].name : null
 }
 
+output "avnu_proxy_url" {
+  description = "HTTPS origin for buzz-avnu-proxy (AVNU_PROXY_URL for Wallet). Null while avnu_proxy_enabled is false or DNS is off. Not the egress-only buzz-paymaster."
+  value       = var.avnu_proxy_enabled ? local.avnu_proxy_url : null
+}
+
+output "avnu_proxy_secret_id" {
+  description = "Secret holding AVNU_API_KEY / PROXY_AUTH_TOKEN. Null while avnu_proxy_enabled is false. Terraform never writes values here — import existing buzz-dev/avnu-proxy on first enable."
+  value       = var.avnu_proxy_enabled ? aws_secretsmanager_secret.avnu_proxy[0].name : null
+}
+
 output "next_steps" {
   description = "Commands to finish the deploy."
 
