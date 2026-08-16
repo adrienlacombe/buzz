@@ -66,6 +66,21 @@ pub enum MarketsError {
          (required env / public host, no localhost default)"
     )]
     IndexerUrlLoopback,
+    /// `AVNU_PROXY_URL` unset — required env / public host, no localhost default.
+    #[error(
+        "AVNU_PROXY_URL is required (public host / required env; no localhost default \
+         such as http://127.0.0.1:8788)"
+    )]
+    AvnuProxyUrlMissing,
+    /// `AVNU_PROXY_URL` pointed at loopback; shipped builds must not use it.
+    #[error(
+        "AVNU_PROXY_URL must not be loopback; set a public proxy host \
+         (required env / public host, no localhost default)"
+    )]
+    AvnuProxyUrlLoopback,
+    /// `place_bet` call batch failed validation.
+    #[error("place_bet call batch rejected: {0}")]
+    InvalidBetBatch(String),
 }
 
 /// Computes the wallet fee for a trade collateral amount.
@@ -132,11 +147,21 @@ pub fn betting_halted_by_remaining_blocks(remaining_blocks: u64) -> bool {
     remaining_blocks <= HALT_BLOCKS_BEFORE_RETARGET
 }
 
+/// Keyring slot markets signing actually uses (human identity nsec only).
+///
+/// Callers must pass this (or another real slot name under test) into
+/// [`assert_markets_signing_keyring`] — never skip the gate by asserting the
+/// constant in isolation without covering real `agent:<pubkey>` inputs.
+#[must_use]
+pub fn markets_signing_keyring_name() -> &'static str {
+    HUMAN_IDENTITY_KEYRING_NAME
+}
+
 /// Keyring names that may own a counterfactual Starknet `NostrAccount`.
 ///
 /// Agent keys live in the same keyring service under `agent:<pubkey>` and must
-/// **never** receive a derived account. Only the human `"identity"` entry (or an
-/// explicit human pubkey passed by the signing path) is eligible.
+/// **never** receive a derived account. Only the human `"identity"` entry is
+/// eligible. Pass the **actual** keyring name of the keys about to sign.
 pub fn assert_human_keyring_name(name: &str) -> Result<(), MarketsError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -152,10 +177,28 @@ pub fn assert_human_keyring_name(name: &str) -> Result<(), MarketsError> {
     Err(MarketsError::AgentKeyNotAllowed)
 }
 
+/// Gate used by `fund_lightning` / `place_bet` before Starknet account derivation.
+///
+/// `keyring_name` must be the real secret-store slot for the keys about to
+/// sign (e.g. `"identity"`, or `agent:<64-hex>` under test). Passing only the
+/// [`HUMAN_IDENTITY_KEYRING_NAME`] constant at the call site without also
+/// testing real agent slot names is not a gate.
+pub fn assert_markets_signing_keyring(keyring_name: &str) -> Result<(), MarketsError> {
+    assert_human_keyring_name(keyring_name)
+}
+
 /// Whether `keyring_name` is the human identity entry.
 #[must_use]
 pub fn is_human_keyring_name(name: &str) -> bool {
     assert_human_keyring_name(name).is_ok()
+}
+
+fn url_is_loopback(base: &str) -> bool {
+    let lower = base.to_ascii_lowercase();
+    lower.contains("127.0.0.1")
+        || lower.contains("localhost")
+        || lower.contains("[::1]")
+        || lower.contains("0.0.0.0")
 }
 
 /// Resolve the markets indexer base URL from `INDEXER_URL`.
@@ -173,10 +216,209 @@ pub fn resolve_indexer_url_from(raw: Option<&str>) -> Result<String, MarketsErro
         .filter(|s| !s.is_empty())
         .unwrap_or(PRODUCT_INDEXER_URL);
     let base = chosen.trim_end_matches('/');
-    if base.contains("127.0.0.1") || base.to_ascii_lowercase().contains("localhost") {
+    if url_is_loopback(base) {
         return Err(MarketsError::IndexerUrlLoopback);
     }
     Ok(base.to_string())
+}
+
+/// Resolve the AVNU paymaster proxy base URL from `AVNU_PROXY_URL`.
+///
+/// **Required env / public host.** No `http://127.0.0.1:8788` product default —
+/// shipped builds must not point at loopback. Refuses loopback even when set.
+pub fn resolve_avnu_proxy_url() -> Result<String, MarketsError> {
+    resolve_avnu_proxy_url_from(std::env::var("AVNU_PROXY_URL").ok().as_deref())
+}
+
+/// Resolve AVNU proxy URL from an optional raw env value.
+pub fn resolve_avnu_proxy_url_from(raw: Option<&str>) -> Result<String, MarketsError> {
+    let chosen = raw.map(str::trim).filter(|s| !s.is_empty());
+    let Some(chosen) = chosen else {
+        return Err(MarketsError::AvnuProxyUrlMissing);
+    };
+    let base = chosen.trim_end_matches('/');
+    if url_is_loopback(base) {
+        return Err(MarketsError::AvnuProxyUrlLoopback);
+    }
+    Ok(base.to_string())
+}
+
+/// One Starknet call as hex strings (frontend / JSON-RPC shape).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BetCallHex {
+    /// Contract address (`0x…`).
+    pub contract_address: String,
+    /// Cairo entrypoint name.
+    pub entrypoint: String,
+    /// Calldata felts as hex strings.
+    pub calldata: Vec<String>,
+}
+
+/// Compare two felt hex strings for equality (padding-insensitive).
+pub fn felt_hex_eq(a: &str, b: &str) -> bool {
+    match (Felt::from_hex(a.trim()), Felt::from_hex(b.trim())) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn felt_hex_canonical(value: &str) -> Result<String, MarketsError> {
+    Felt::from_hex(value.trim())
+        .map(|f| f.to_fixed_hex_string())
+        .map_err(|_| MarketsError::InvalidBetBatch(format!("invalid felt hex: {value}")))
+}
+
+fn entrypoint_forbidden(entrypoint: &str) -> bool {
+    let ep = entrypoint.to_ascii_lowercase();
+    ep.contains("lightning") || ep.contains("atomiq") || ep.contains("invoice")
+}
+
+/// Build the wallet-fee `transfer` call Rust will put first in the signed batch.
+#[must_use]
+pub fn build_wallet_fee_call(token_amount: u128) -> BetCallHex {
+    let fee = wallet_fee_amount(token_amount);
+    let (low, high) = u256_felts(fee);
+    BetCallHex {
+        contract_address: COLLATERAL_TOKEN.to_string(),
+        entrypoint: "transfer".to_string(),
+        calldata: vec![
+            FEE_RECIPIENT.to_string(),
+            low.to_fixed_hex_string(),
+            high.to_fixed_hex_string(),
+        ],
+    }
+}
+
+/// Rebuild + validate the `place_bet` batch.
+///
+/// Rust **owns** the wallet fee transfer: any frontend `transfer` is stripped
+/// and replaced with [`build_wallet_fee_call`]. Remaining calls must be exactly
+/// `approve` on [`COLLATERAL_TOKEN`] (spender [`DIFFICULTY_MARKET`]) and
+/// `execute_trade` on [`DIFFICULTY_MARKET`]. Anything else is rejected.
+///
+/// Returns `(calls, fee_amount)` where `calls[0]` is always the fee transfer.
+pub fn build_validated_bet_batch(
+    calls: &[BetCallHex],
+    token_amount: u128,
+) -> Result<(Vec<BetCallHex>, u128), MarketsError> {
+    if calls.is_empty() {
+        return Err(MarketsError::InvalidBetBatch(
+            "place_bet requires approve + execute_trade".into(),
+        ));
+    }
+
+    let mut approve: Option<BetCallHex> = None;
+    let mut trade: Option<BetCallHex> = None;
+
+    for c in calls {
+        if entrypoint_forbidden(&c.entrypoint) {
+            return Err(MarketsError::InvalidBetBatch(
+                "place_bet is Starknet-only; Lightning belongs on Fund".into(),
+            ));
+        }
+        let ep = c.entrypoint.as_str();
+        if felt_hex_eq(&c.contract_address, COLLATERAL_TOKEN) && ep.eq_ignore_ascii_case("transfer")
+        {
+            // Frontend may prepend a fee call; Rust rebuilds it — do not trust it.
+            continue;
+        }
+        if felt_hex_eq(&c.contract_address, COLLATERAL_TOKEN) && ep.eq_ignore_ascii_case("approve")
+        {
+            if approve.is_some() {
+                return Err(MarketsError::InvalidBetBatch("duplicate approve".into()));
+            }
+            if c.calldata.is_empty() || !felt_hex_eq(c.calldata[0].as_str(), DIFFICULTY_MARKET) {
+                return Err(MarketsError::InvalidBetBatch(
+                    "approve spender must be the difficulty market".into(),
+                ));
+            }
+            approve = Some(BetCallHex {
+                contract_address: felt_hex_canonical(&c.contract_address)?,
+                entrypoint: "approve".to_string(),
+                calldata: c
+                    .calldata
+                    .iter()
+                    .map(|x| felt_hex_canonical(x))
+                    .collect::<Result<Vec<_>, _>>()?,
+            });
+            continue;
+        }
+        if felt_hex_eq(&c.contract_address, DIFFICULTY_MARKET)
+            && ep.eq_ignore_ascii_case("execute_trade")
+        {
+            if trade.is_some() {
+                return Err(MarketsError::InvalidBetBatch(
+                    "duplicate execute_trade".into(),
+                ));
+            }
+            trade = Some(BetCallHex {
+                contract_address: felt_hex_canonical(&c.contract_address)?,
+                entrypoint: "execute_trade".to_string(),
+                calldata: c
+                    .calldata
+                    .iter()
+                    .map(|x| felt_hex_canonical(x))
+                    .collect::<Result<Vec<_>, _>>()?,
+            });
+            continue;
+        }
+        return Err(MarketsError::InvalidBetBatch(format!(
+            "unexpected call {} on {}",
+            c.entrypoint, c.contract_address
+        )));
+    }
+
+    let approve = approve.ok_or_else(|| {
+        MarketsError::InvalidBetBatch("missing approve on collateral token".into())
+    })?;
+    let trade = trade.ok_or_else(|| {
+        MarketsError::InvalidBetBatch("missing execute_trade on difficulty market".into())
+    })?;
+
+    let fee_amount = wallet_fee_amount(token_amount);
+    let fee_call = build_wallet_fee_call(token_amount);
+    Ok((vec![fee_call, approve, trade], fee_amount))
+}
+
+/// Whether the first signed call is the wallet fee transfer for `fee_amount`.
+///
+/// `PlaceBetResult.fee_amount` alone is not enough — the bytes about to be
+/// BIP-340-signed must start with `transfer(FEE_RECIPIENT, fee)`.
+pub fn fee_transfer_matches(
+    contract_address: &str,
+    entrypoint: &str,
+    calldata: &[String],
+    fee_amount: u128,
+) -> bool {
+    if !entrypoint.eq_ignore_ascii_case("transfer") {
+        return false;
+    }
+    if !felt_hex_eq(contract_address, COLLATERAL_TOKEN) {
+        return false;
+    }
+    if calldata.len() != 3 {
+        return false;
+    }
+    let (low, high) = u256_felts(fee_amount);
+    felt_hex_eq(&calldata[0], FEE_RECIPIENT)
+        && felt_hex_eq(&calldata[1], &low.to_fixed_hex_string())
+        && felt_hex_eq(&calldata[2], &high.to_fixed_hex_string())
+}
+
+/// Assert the first call in a signed batch is the wallet fee transfer.
+pub fn assert_fee_is_first_call(
+    contract_address: &str,
+    entrypoint: &str,
+    calldata: &[String],
+    fee_amount: u128,
+) -> Result<(), MarketsError> {
+    if fee_transfer_matches(contract_address, entrypoint, calldata, fee_amount) {
+        Ok(())
+    } else {
+        Err(MarketsError::InvalidBetBatch(
+            "signed batch must start with wallet fee transfer to FEE_RECIPIENT".into(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -242,23 +484,32 @@ mod tests {
     fn human_identity_may_own_account() {
         assert!(is_human_keyring_name("identity"));
         assert_eq!(assert_human_keyring_name("identity"), Ok(()));
+        assert_eq!(
+            assert_markets_signing_keyring(markets_signing_keyring_name()),
+            Ok(())
+        );
     }
 
     #[test]
     fn agent_keys_do_not_get_starknet_accounts() {
+        // Real secret_store / managed-agent slot names — not the identity constant.
         let agent = "agent:8dae5a92916c512029ad1534fcf264e0e2e33ce492acf34588bc6268f7570dd5";
         assert!(!is_human_keyring_name(agent));
         assert_eq!(
-            assert_human_keyring_name(agent),
+            assert_markets_signing_keyring(agent),
             Err(MarketsError::AgentKeyNotAllowed)
         );
         assert_eq!(
-            assert_human_keyring_name("agent:anything"),
+            assert_markets_signing_keyring("agent:abc123"),
+            Err(MarketsError::AgentKeyNotAllowed)
+        );
+        assert_eq!(
+            assert_markets_signing_keyring("agent:anything"),
             Err(MarketsError::AgentKeyNotAllowed)
         );
         // Random non-identity names are also refused.
         assert_eq!(
-            assert_human_keyring_name("some-other-slot"),
+            assert_markets_signing_keyring("some-other-slot"),
             Err(MarketsError::AgentKeyNotAllowed)
         );
     }
@@ -286,5 +537,84 @@ mod tests {
             resolve_indexer_url_from(Some("http://localhost:8787")),
             Err(MarketsError::IndexerUrlLoopback)
         );
+    }
+
+    #[test]
+    fn avnu_proxy_url_required_never_loopback() {
+        assert_eq!(
+            resolve_avnu_proxy_url_from(None),
+            Err(MarketsError::AvnuProxyUrlMissing)
+        );
+        assert_eq!(
+            resolve_avnu_proxy_url_from(Some("")),
+            Err(MarketsError::AvnuProxyUrlMissing)
+        );
+        assert_eq!(
+            resolve_avnu_proxy_url_from(Some("http://127.0.0.1:8788")),
+            Err(MarketsError::AvnuProxyUrlLoopback)
+        );
+        assert_eq!(
+            resolve_avnu_proxy_url_from(Some("http://localhost:8788")),
+            Err(MarketsError::AvnuProxyUrlLoopback)
+        );
+        assert_eq!(
+            resolve_avnu_proxy_url_from(Some("https://paymaster.example/proxy/")).unwrap(),
+            "https://paymaster.example/proxy"
+        );
+    }
+
+    #[test]
+    fn validated_bet_batch_rebuilds_fee_first() {
+        let token_amount = 1_000_000u128;
+        let approve = BetCallHex {
+            contract_address: COLLATERAL_TOKEN.to_string(),
+            entrypoint: "approve".into(),
+            calldata: vec![DIFFICULTY_MARKET.to_string(), "0x1".into(), "0x0".into()],
+        };
+        let trade = BetCallHex {
+            contract_address: DIFFICULTY_MARKET.to_string(),
+            entrypoint: "execute_trade".into(),
+            calldata: vec!["0xabc".into()],
+        };
+        // Frontend may send a wrong fee transfer — Rust must replace it.
+        let bogus_fee = BetCallHex {
+            contract_address: COLLATERAL_TOKEN.to_string(),
+            entrypoint: "transfer".into(),
+            calldata: vec!["0x1".into(), "0x1".into(), "0x0".into()],
+        };
+        let (batch, fee) =
+            build_validated_bet_batch(&[bogus_fee, approve.clone(), trade.clone()], token_amount)
+                .unwrap();
+        assert_eq!(fee, wallet_fee_amount(token_amount));
+        assert_eq!(batch.len(), 3);
+        assert_eq!(batch[0].entrypoint, "transfer");
+        assert!(fee_transfer_matches(
+            &batch[0].contract_address,
+            &batch[0].entrypoint,
+            &batch[0].calldata,
+            fee
+        ));
+        assert_eq!(batch[1].entrypoint, "approve");
+        assert_eq!(batch[2].entrypoint, "execute_trade");
+        assert_fee_is_first_call(
+            &batch[0].contract_address,
+            &batch[0].entrypoint,
+            &batch[0].calldata,
+            fee,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn validated_bet_batch_rejects_foreign_contracts() {
+        let bad = BetCallHex {
+            contract_address: "0xdead".into(),
+            entrypoint: "execute_trade".into(),
+            calldata: vec![],
+        };
+        assert!(matches!(
+            build_validated_bet_batch(&[bad], 1000),
+            Err(MarketsError::InvalidBetBatch(_))
+        ));
     }
 }

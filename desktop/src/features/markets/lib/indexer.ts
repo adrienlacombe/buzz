@@ -10,7 +10,13 @@
  * - `GET {INDEXER_URL}/health`
  *
  * Never read or ship indexer `ADMIN_API_KEY` / `AVNU_API_KEY` here.
+ *
+ * In the packaged Tauri app, prefer {@link resolveIndexerUrlForApp} so the
+ * runtime `INDEXER_URL` from the Tauri process is honored (Vite bake-time
+ * env alone would otherwise silently no-op documented `INDEXER_URL`).
  */
+
+import { invokeTauri } from "@/shared/api/tauri";
 
 import { PRODUCT_INDEXER_URL } from "./constants";
 
@@ -31,6 +37,22 @@ export function resolveIndexerUrl(
     );
   }
   return base;
+}
+
+/**
+ * Prefer Tauri-injected runtime `INDEXER_URL`, then Vite `VITE_INDEXER_URL` /
+ * `INDEXER_URL`, then the product host.
+ */
+export async function resolveIndexerUrlForApp(): Promise<string> {
+  try {
+    const fromTauri = await invokeTauri<string>("markets_indexer_url");
+    if (fromTauri?.trim()) {
+      return resolveIndexerUrl({ INDEXER_URL: fromTauri.trim() });
+    }
+  } catch {
+    // Browser / unit tests / Tauri command unavailable — fall through.
+  }
+  return resolveIndexerUrl();
 }
 
 /** Normalize a felt hex for equality (strip 0x, leading zeros; lowercase). */
@@ -61,9 +83,10 @@ export type IndexerMarket = {
 
 /** Unauthenticated listing fetch — never sends ADMIN_API_KEY. */
 export async function fetchIndexerHealth(
-  baseUrl = resolveIndexerUrl(),
+  baseUrl?: string,
 ): Promise<{ status: string }> {
-  const res = await fetch(`${baseUrl}/health`);
+  const base = baseUrl ?? (await resolveIndexerUrlForApp());
+  const res = await fetch(`${base}/health`);
   if (!res.ok) {
     throw new Error(`Indexer health failed: HTTP ${res.status}`);
   }
@@ -72,9 +95,10 @@ export async function fetchIndexerHealth(
 
 /** Unauthenticated listing fetch — never sends ADMIN_API_KEY. */
 export async function fetchIndexerMarkets(
-  baseUrl = resolveIndexerUrl(),
+  baseUrl?: string,
 ): Promise<IndexerMarket[]> {
-  const res = await fetch(`${baseUrl}/api/markets`);
+  const base = baseUrl ?? (await resolveIndexerUrlForApp());
+  const res = await fetch(`${base}/api/markets`);
   if (!res.ok) {
     throw new Error(`Indexer markets failed: HTTP ${res.status}`);
   }

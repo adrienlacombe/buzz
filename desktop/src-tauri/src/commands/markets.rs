@@ -10,8 +10,9 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    assert_human_keyring_name, betting_halted, betting_halted_by_remaining_blocks,
-    resolve_indexer_url, wallet_fee_amount, HUMAN_IDENTITY_KEYRING_NAME, NOSTR_ACCOUNT_CLASS_HASH,
+    assert_fee_is_first_call, assert_markets_signing_keyring, betting_halted,
+    betting_halted_by_remaining_blocks, build_validated_bet_batch, markets_signing_keyring_name,
+    resolve_avnu_proxy_url, resolve_indexer_url, BetCallHex, NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
     any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
@@ -152,16 +153,16 @@ fn parse_call(call: &PreparedCall) -> Result<OutsideCall, String> {
 }
 
 fn human_keys(state: &AppState) -> Result<nostr::Keys, String> {
-    // Gate: only the human identity keyring slot may own a Starknet account.
-    assert_human_keyring_name(HUMAN_IDENTITY_KEYRING_NAME).map_err(|e| e.to_string())?;
+    // Pass the real keyring slot name for the keys we are about to use.
+    // Tests must exercise this gate with actual `agent:<pubkey>` inputs — see
+    // `agent_keyring_slot_used_by_secret_store_is_rejected`.
+    let keyring_name = markets_signing_keyring_name();
+    assert_markets_signing_keyring(keyring_name).map_err(|e| e.to_string())?;
     state.signing_keys()
 }
 
-fn avnu_proxy_url() -> String {
-    std::env::var("AVNU_PROXY_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8788".to_string())
-        .trim_end_matches('/')
-        .to_string()
+fn avnu_proxy_url() -> Result<String, String> {
+    resolve_avnu_proxy_url().map_err(|e| e.to_string())
 }
 
 fn chain_id_short() -> String {
@@ -175,11 +176,16 @@ async fn avnu_rpc(method: &str, params: Value) -> Result<Value, String> {
         "method": method,
         "params": params,
     });
-    let url = format!("{}/rpc", avnu_proxy_url());
+    let url = format!("{}/rpc", avnu_proxy_url()?);
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(&body)
+    let mut req = client.post(&url).json(&body);
+    if let Ok(token) = std::env::var("AVNU_PROXY_AUTH_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            req = req.bearer_auth(token);
+        }
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("AVNU proxy unreachable ({url}): {e}"))?;
@@ -342,6 +348,10 @@ pub async fn fund_lightning(
 ///
 /// Owns the halt check via mempool.space `remainingBlocks` (not a JS-supplied
 /// height). Refuses when `remainingBlocks <= 24`.
+///
+/// Does **not** sign an arbitrary frontend `Call[]`. Rust rebuilds the wallet
+/// fee transfer and accepts only `approve` + `execute_trade` against the
+/// product contracts. The fee transfer is always first in the signed batch.
 #[tauri::command]
 pub async fn place_bet(
     state: State<'_, AppState>,
@@ -355,21 +365,29 @@ pub async fn place_bet(
             halt.remaining_blocks
         ));
     }
-    if calls.is_empty() {
-        return Err("place_bet requires at least one call".into());
-    }
-    // Refuse anything that looks like a Lightning/Atomiq entrypoint mixed in.
-    for c in &calls {
-        let ep = c.entrypoint.to_ascii_lowercase();
-        if ep.contains("lightning") || ep.contains("atomiq") || ep.contains("invoice") {
-            return Err("place_bet is Starknet-only; Lightning belongs on Fund".into());
-        }
-    }
 
     let token_amount: u128 = token_amount
         .parse()
         .map_err(|_| "invalid tokenAmount".to_string())?;
-    let fee_amount = wallet_fee_amount(token_amount);
+
+    let incoming: Vec<BetCallHex> = calls
+        .iter()
+        .map(|c| BetCallHex {
+            contract_address: c.contract_address.clone(),
+            entrypoint: c.entrypoint.clone(),
+            calldata: c.calldata.clone(),
+        })
+        .collect();
+    let (validated, fee_amount) =
+        build_validated_bet_batch(&incoming, token_amount).map_err(|e| e.to_string())?;
+    // Defense in depth: fee must be first before we talk to AVNU.
+    assert_fee_is_first_call(
+        &validated[0].contract_address,
+        &validated[0].entrypoint,
+        &validated[0].calldata,
+        fee_amount,
+    )
+    .map_err(|e| e.to_string())?;
 
     let keys = human_keys(&state)?;
     let pubkey_hex = keys.public_key().to_hex();
@@ -377,11 +395,16 @@ pub async fn place_bet(
         .map_err(|e| e.to_string())?;
     let (pk_low, pk_high) = pubkey_felts(&pubkey_hex).map_err(|e| e.to_string())?;
 
-    let rpc_calls: Vec<Value> = calls
+    let rpc_calls: Vec<Value> = validated
         .iter()
         .map(|c| {
+            let prepared = PreparedCall {
+                contract_address: c.contract_address.clone(),
+                entrypoint: c.entrypoint.clone(),
+                calldata: c.calldata.clone(),
+            };
             // Touch parse early so bad calldata fails before paying the proxy.
-            let _ = parse_call(c)?;
+            let _ = parse_call(&prepared)?;
             Ok(json!({
                 "contractAddress": c.contract_address,
                 "entrypoint": c.entrypoint,
@@ -444,6 +467,25 @@ pub async fn place_bet(
         .ok_or_else(|| format!("buildTransaction missing typed_data: {built}"))?;
 
     let (execution, chain_short) = typed_data_to_outside_execution(typed)?;
+    // Enforce fee-first on the batch AVNU asked us to sign — not only the
+    // rebuilt rpc_calls / PlaceBetResult.fee_amount.
+    let first = execution
+        .calls
+        .first()
+        .ok_or_else(|| "typed_data Calls empty".to_string())?;
+    let first_to = first.to.to_fixed_hex_string();
+    let transfer_selector = selector_from_name("transfer").map_err(|e| e.to_string())?;
+    if first.selector != transfer_selector {
+        return Err("signed batch must start with wallet fee transfer to FEE_RECIPIENT".into());
+    }
+    let first_calldata: Vec<String> = first
+        .calldata
+        .iter()
+        .map(|f| f.to_fixed_hex_string())
+        .collect();
+    assert_fee_is_first_call(&first_to, "transfer", &first_calldata, fee_amount)
+        .map_err(|e| e.to_string())?;
+
     let msg_hash = execution
         .message_hash(account, &chain_short)
         .map_err(|e| e.to_string())?;
@@ -522,17 +564,38 @@ pub async fn bitcoin_wallet_address(
     fund_lightning(state, 100).await
 }
 
+/// Runtime indexer base URL (`INDEXER_URL` or product host). Honored by the
+/// Vite client via this command so documented `INDEXER_URL` does not no-op.
+#[tauri::command]
+pub async fn markets_indexer_url() -> Result<String, String> {
+    resolve_indexer_url().map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buzz_core_pkg::markets::{is_human_keyring_name, MarketsError};
+    use buzz_core_pkg::markets::{
+        assert_markets_signing_keyring, is_human_keyring_name, MarketsError,
+        HUMAN_IDENTITY_KEYRING_NAME,
+    };
 
     #[test]
-    fn agent_keyring_names_are_rejected_before_signing() {
+    fn agent_keyring_slot_used_by_secret_store_is_rejected() {
+        // Real naming from secret_store / managed agents — not only the
+        // HUMAN_IDENTITY_KEYRING_NAME constant (which always Ok's).
+        let agent = "agent:8dae5a92916c512029ad1534fcf264e0e2e33ce492acf34588bc6268f7570dd5";
+        assert_eq!(
+            assert_markets_signing_keyring(agent),
+            Err(MarketsError::AgentKeyNotAllowed)
+        );
+        assert_eq!(
+            assert_markets_signing_keyring("agent:abc123"),
+            Err(MarketsError::AgentKeyNotAllowed)
+        );
         assert!(is_human_keyring_name(HUMAN_IDENTITY_KEYRING_NAME));
         assert_eq!(
-            assert_human_keyring_name("agent:abc"),
-            Err(MarketsError::AgentKeyNotAllowed)
+            assert_markets_signing_keyring(markets_signing_keyring_name()),
+            Ok(())
         );
     }
 

@@ -18,7 +18,7 @@ import {
   fetchIndexerHealth,
   fetchIndexerMarkets,
   findDifficultyMarket,
-  resolveIndexerUrl,
+  resolveIndexerUrlForApp,
   type IndexerMarket,
 } from "../lib/indexer";
 import { fetchDifficultyHaltStatus, placeBet } from "../lib/placeBet";
@@ -45,7 +45,7 @@ export function MarketsScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const base = resolveIndexerUrl();
+        const base = await resolveIndexerUrlForApp();
         await fetchIndexerHealth(base);
         const markets = await fetchIndexerMarkets(base);
         const found = findDifficultyMarket(markets, DIFFICULTY_MARKET);
@@ -200,10 +200,11 @@ export function MarketsScreen() {
             Pick a target mean on the raw Bitcoin difficulty axis. Collateral is
             BTC. Betting pauses 24 blocks before each difficulty retarget.
           </p>
-          <div className="block space-y-1 text-sm">
-            <label htmlFor="markets-target-difficulty">
-              Target difficulty (D)
-            </label>
+          <label
+            className="block space-y-1 text-sm"
+            htmlFor="markets-target-difficulty"
+          >
+            Target difficulty (D)
             <Input
               id="markets-target-difficulty"
               value={targetDifficulty}
@@ -211,16 +212,19 @@ export function MarketsScreen() {
               placeholder="e.g. 1.1e14"
               disabled={halted || busy || !market}
             />
-          </div>
-          <div className="block space-y-1 text-sm">
-            <label htmlFor="markets-collateral-btc">Collateral (BTC)</label>
+          </label>
+          <label
+            className="block space-y-1 text-sm"
+            htmlFor="markets-collateral-btc"
+          >
+            Collateral (BTC)
             <Input
               id="markets-collateral-btc"
               value={collateralBtc}
               onChange={(e) => setCollateralBtc(e.target.value)}
               disabled={halted || busy || !market}
             />
-          </div>
+          </label>
           <Button
             onClick={() => void onPlaceBet()}
             disabled={halted || busy || !market}
@@ -234,15 +238,18 @@ export function MarketsScreen() {
             Fund with Lightning. Pays into your wallet as BTC. This screen never
             places a bet.
           </p>
-          <div className="block space-y-1 text-sm">
-            <label htmlFor="markets-fund-sats">Amount (sats)</label>
+          <label
+            className="block space-y-1 text-sm"
+            htmlFor="markets-fund-sats"
+          >
+            Amount (sats)
             <Input
               id="markets-fund-sats"
               value={fundSats}
               onChange={(e) => setFundSats(e.target.value)}
               disabled={busy}
             />
-          </div>
+          </label>
           <Button onClick={() => void onFund()} disabled={busy}>
             {busy ? "Creating invoice…" : "Fund with Lightning"}
           </Button>

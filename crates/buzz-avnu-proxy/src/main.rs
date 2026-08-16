@@ -4,6 +4,16 @@
 //! the proxy injects `x-paymaster-api-key` from `process`-equivalent env and
 //! forwards JSON-RPC to AVNU.
 //!
+//! # Security
+//!
+//! This binary must **not** be an unauthenticated open relay:
+//! - Default bind is loopback only (`127.0.0.1:8788`).
+//! - Non-loopback binds require `PROXY_AUTH_TOKEN` (Bearer) on every `/` and
+//!   `/rpc` request.
+//! - No `CORS Any` — the product path is Tauri `reqwest`, not a browser.
+//! - Production sponsorship is the AWS paymaster (egress-only, no ingress);
+//!   do not expose this proxy on `0.0.0.0` without auth.
+//!
 //! # Required environment
 //!
 //! ```text
@@ -17,7 +27,10 @@
 //! AVNU_PAYMASTER_URL    Upstream paymaster JSON-RPC endpoint.
 //!                       Default: https://starknet.paymaster.avnu.fi
 //!                       Test:    https://sepolia.paymaster.avnu.fi
-//! BIND_ADDR             Listen address. Default: 0.0.0.0:8788
+//! BIND_ADDR             Listen address. Default: 127.0.0.1:8788 (loopback).
+//!                       Non-loopback requires PROXY_AUTH_TOKEN.
+//! PROXY_AUTH_TOKEN      Shared secret; required when binding off-loopback.
+//!                       Clients send `Authorization: Bearer <token>`.
 //!
 //! INDEXER_URL           Required on listing clients (or product public host
 //!                       https://markets.bitcoinmarkets.app). NO localhost
@@ -35,13 +48,13 @@ use axum::{
     Router,
 };
 use serde_json::Value;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 
 const DEFAULT_UPSTREAM: &str = "https://starknet.paymaster.avnu.fi";
-const DEFAULT_BIND: &str = "0.0.0.0:8788";
+/// Loopback-only default — never `0.0.0.0` (that would be an open relay).
+const DEFAULT_BIND: &str = "127.0.0.1:8788";
 const PRODUCT_INDEXER_URL: &str = "https://markets.bitcoinmarkets.app";
 
 #[derive(Clone)]
@@ -49,16 +62,30 @@ struct AppState {
     client: reqwest::Client,
     upstream: String,
     api_key: String,
+    /// When set, every JSON-RPC request must present this Bearer token.
+    auth_token: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
 enum BootError {
     #[error("AVNU_API_KEY is required (set it in the environment; never commit the value)")]
     MissingApiKey,
+    #[error(
+        "BIND_ADDR {0:?} is not loopback; set PROXY_AUTH_TOKEN so this is not an \
+         unauthenticated open relay (production sponsorship is the AWS paymaster)"
+    )]
+    NonLoopbackRequiresAuth(String),
     #[error("invalid BIND_ADDR {0:?}: {1}")]
     BadBind(String, String),
     #[error("bind failed: {0}")]
     Bind(#[from] std::io::Error),
+}
+
+fn is_loopback(addr: &SocketAddr) -> bool {
+    match addr.ip() {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback(),
+    }
 }
 
 #[tokio::main]
@@ -102,23 +129,28 @@ async fn main() -> Result<(), BootError> {
         BootError::BadBind(bind_raw.clone(), e.to_string())
     })?;
 
+    let auth_token = std::env::var("PROXY_AUTH_TOKEN")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    if !is_loopback(&addr) && auth_token.is_none() {
+        return Err(BootError::NonLoopbackRequiresAuth(bind_raw));
+    }
+
     let state = Arc::new(AppState {
         client: reqwest::Client::new(),
         upstream,
         api_key,
+        auth_token,
     });
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
-
+    // No CORS Any — this is not a browser-facing open relay.
     let app = Router::new()
         .route("/health", get(health))
         .route("/", post(proxy_rpc))
         .route("/rpc", post(proxy_rpc))
-        .with_state(state)
-        .layer(cors);
+        .with_state(state);
 
     info!(%addr, "buzz-avnu-proxy listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -136,7 +168,50 @@ async fn health() -> impl IntoResponse {
     )
 }
 
-async fn proxy_rpc(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "error": { "code": -32003, "message": "unauthorized" },
+            "id": null
+        })),
+    )
+        .into_response()
+}
+
+fn authorize(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(expected) = state.auth_token.as_deref() else {
+        // Loopback bind without token — local-only.
+        return true;
+    };
+    let Some(value) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(token) = value.strip_prefix("Bearer ").map(str::trim) else {
+        return false;
+    };
+    // Constant-time-ish compare for typical token lengths.
+    token.len() == expected.len()
+        && token
+            .as_bytes()
+            .iter()
+            .zip(expected.as_bytes())
+            .all(|(a, b)| a == b)
+}
+
+async fn proxy_rpc(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !authorize(&state, &headers) {
+        return unauthorized();
+    }
+
     // Validate JSON so we never forward garbage that could confuse operators'
     // logs into looking like a key leak.
     if let Err(e) = serde_json::from_slice::<Value>(&body) {
@@ -151,13 +226,13 @@ async fn proxy_rpc(State(state): State<Arc<AppState>>, body: Bytes) -> Response 
             .into_response();
     }
 
-    let mut headers = HeaderMap::new();
-    headers.insert("content-type", HeaderValue::from_static("application/json"));
-    headers.insert("accept", HeaderValue::from_static("*/*"));
+    let mut out_headers = HeaderMap::new();
+    out_headers.insert("content-type", HeaderValue::from_static("application/json"));
+    out_headers.insert("accept", HeaderValue::from_static("*/*"));
     // Inject the secret server-side. Never echo it back.
     match HeaderValue::from_str(&state.api_key) {
         Ok(v) => {
-            headers.insert("x-paymaster-api-key", v);
+            out_headers.insert("x-paymaster-api-key", v);
         }
         Err(_) => {
             error!("AVNU_API_KEY contains characters illegal in an HTTP header");
@@ -176,7 +251,7 @@ async fn proxy_rpc(State(state): State<Arc<AppState>>, body: Bytes) -> Response 
     let upstream = state
         .client
         .post(&state.upstream)
-        .headers(headers)
+        .headers(out_headers)
         .body(body);
 
     match upstream.send().await {

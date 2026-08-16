@@ -25,9 +25,14 @@ screen uses Atomiq `@atomiqlabs/sdk` `FROM_BTCLN_AUTO` into that address
    `isqrt(2·σ·√π)` (same limbs). Normal `computeHints` must not be used.
 2. Calls = `[feeCall, approve(+5%), execute_trade]`. Wallet fee is 10 bps
    (min 1 sat) as a separate transfer — do not bump approve or
-   `supplied_collateral`.
+   `supplied_collateral`. **Rust rebuilds/validates the batch** before
+   signing: fee transfer to `FEE_RECIPIENT` first, then approve /
+   `execute_trade` against `DIFFICULTY_MARKET` + `COLLATERAL_TOKEN` only.
+   Arbitrary frontend calls are rejected; `PlaceBetResult.feeAmount` alone
+   is not the fee gate.
 3. Rust signs SNIP-12 OutsideExecution with BIP-340 (`sign_tx_hash`) and
-   submits via the AVNU proxy (`feeMode: sponsored`).
+   submits via the AVNU proxy (`feeMode: sponsored`). Agent keyring slots
+   (`agent:<pubkey>`) never receive a Starknet account.
 
 Halt: wallet-owned (not indexer). Product signal is mempool.space
 `GET /api/v1/difficulty-adjustment` — disable betting when
@@ -46,7 +51,10 @@ listing-proof only and must not ship.
 INDEXER_URL=https://markets.bitcoinmarkets.app
 ```
 
-(`VITE_INDEXER_URL` is accepted in the desktop Vite bundle.)
+(`VITE_INDEXER_URL` is accepted in the desktop Vite bundle. Vite also exposes
+`INDEXER_URL` via `envPrefix`. Packaged builds prefer the Tauri command
+`markets_indexer_url`, which reads runtime `INDEXER_URL` so the documented
+env var does not silently no-op.)
 
 Listing/health (no auth):
 
@@ -78,15 +86,25 @@ There is no SDK `prepareLognormalTrade`. Hints set both `l2_norm_denom` and
 No `executeTrade()`. Do not bump approve / `supplied_collateral` for the fee.
 **Do not mix Lightning into the bet path.**
 
-## AVNU_API_KEY
+## AVNU_API_KEY / AVNU_PROXY_URL
 
-Set only on `buzz-avnu-proxy`:
+Set `AVNU_API_KEY` only on `buzz-avnu-proxy` (never in the Tauri binary):
 
 ```text
 AVNU_API_KEY=…          # from portal.avnu.fi — never commit
 AVNU_PAYMASTER_URL=https://starknet.paymaster.avnu.fi
-BIND_ADDR=0.0.0.0:8788
+BIND_ADDR=127.0.0.1:8788   # loopback default — not 0.0.0.0
+# Non-loopback binds require:
+# PROXY_AUTH_TOKEN=…
 ```
 
-Run: `cargo run -p buzz-avnu-proxy`. Desktop uses `AVNU_PROXY_URL` to reach
-the proxy; the key never enters the Tauri binary.
+The proxy is **not** an unauthenticated open relay: default bind is loopback,
+there is no `CORS Any`, and off-loopback requires Bearer `PROXY_AUTH_TOKEN`.
+Production sponsorship is the AWS paymaster (egress-only, no ingress).
+
+Desktop `AVNU_PROXY_URL` is **required** (public host / required env). There is
+**no** `http://127.0.0.1:8788` product default — shipped builds refuse
+loopback. Optional `AVNU_PROXY_AUTH_TOKEN` is sent as Bearer when the proxy
+requires auth.
+
+Run locally: `cargo run -p buzz-avnu-proxy`. The key never enters the client.

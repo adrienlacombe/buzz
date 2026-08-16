@@ -635,6 +635,7 @@ pub fn run() {
             place_bet,
             difficulty_halt_status,
             bitcoin_wallet_address,
+            markets_indexer_url,
             get_nsec,
             generate_backup_passphrase,
             create_ncryptsec_backup,

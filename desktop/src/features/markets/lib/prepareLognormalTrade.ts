@@ -148,10 +148,13 @@ export function prepareLognormalTrade(
     throw new Error("Invalid target variance");
   }
 
-  const currentMu = requireSq(market.mu, "market.mu");
-  const currentVar = requireSq(market.variance, "market.variance");
-  const candidateMu = requireSq(targetMu, "targetMu");
-  const candidateVar = requireSq(targetVariance, "targetVariance");
+  const currentMu = SQ128x128.fromNumber(market.mu);
+  const currentVar = SQ128x128.fromNumber(market.variance);
+  const candidateMu = SQ128x128.fromNumber(targetMu);
+  const candidateVar = SQ128x128.fromNumber(targetVariance);
+  if (!(currentMu && currentVar && candidateMu && candidateVar)) {
+    throw new Error("Failed to build lognormal distributions");
+  }
 
   const current = LognormalDistribution.create(currentMu, currentVar);
   const candidate = LognormalDistribution.create(candidateMu, candidateVar);

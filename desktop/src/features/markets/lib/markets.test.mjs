@@ -1,63 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-const WALLET_FEE_BPS = 10n;
-const RETARGET_INTERVAL = 2016;
-const HALT_BLOCKS_BEFORE_RETARGET = 24;
-const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
-const DIFFICULTY_MARKET =
-  "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
-
-function walletFeeAmount(tokenAmount) {
-  if (tokenAmount <= 0n) return 0n;
-  const fee = (tokenAmount * WALLET_FEE_BPS + 9_999n) / 10_000n;
-  return fee < 1n ? 1n : fee;
-}
-
-function nextRetargetHeight(currentHeight) {
-  return (
-    (Math.floor(currentHeight / RETARGET_INTERVAL) + 1) * RETARGET_INTERVAL
-  );
-}
-
-function haltHeight(currentHeight) {
-  return nextRetargetHeight(currentHeight) - HALT_BLOCKS_BEFORE_RETARGET;
-}
-
-function bettingHalted(currentHeight) {
-  return currentHeight >= haltHeight(currentHeight);
-}
-
-function bettingHaltedByRemainingBlocks(remainingBlocks) {
-  return remainingBlocks <= HALT_BLOCKS_BEFORE_RETARGET;
-}
-
-function resolveIndexerUrl(env = {}) {
-  const raw =
-    (env.VITE_INDEXER_URL || "").trim() ||
-    (env.INDEXER_URL || "").trim() ||
-    PRODUCT_INDEXER_URL;
-  const base = raw.replace(/\/$/, "");
-  if (/127\.0\.0\.1|localhost/i.test(base)) {
-    throw new Error(
-      "INDEXER_URL must not be loopback; use https://markets.bitcoinmarkets.app",
-    );
-  }
-  return base;
-}
-
-function normalizeMarketAddress(address) {
-  const hex = address.trim().toLowerCase().replace(/^0x/, "");
-  const stripped = hex.replace(/^0+/, "") || "0";
-  return `0x${stripped}`;
-}
-
-function findDifficultyMarket(markets, difficultyMarketAddress) {
-  const want = normalizeMarketAddress(difficultyMarketAddress);
-  return (
-    markets.find((m) => normalizeMarketAddress(m.address) === want) ?? null
-  );
-}
+import { DIFFICULTY_MARKET, PRODUCT_INDEXER_URL } from "./constants.ts";
+import { walletFeeAmount } from "./fee.ts";
+import {
+  bettingHalted,
+  bettingHaltedByRemainingBlocks,
+  haltHeight,
+  nextRetargetHeight,
+} from "./halt.ts";
+import { findDifficultyMarket, resolveIndexerUrl } from "./indexer.ts";
 
 describe("walletFeeAmount", () => {
   it("charges 10 bps with ceil", () => {
@@ -108,6 +60,12 @@ describe("INDEXER_URL", () => {
     assert.equal(
       resolveIndexerUrl({
         INDEXER_URL: "https://markets.bitcoinmarkets.app/",
+      }),
+      "https://markets.bitcoinmarkets.app",
+    );
+    assert.equal(
+      resolveIndexerUrl({
+        VITE_INDEXER_URL: "https://markets.bitcoinmarkets.app/",
       }),
       "https://markets.bitcoinmarkets.app",
     );
