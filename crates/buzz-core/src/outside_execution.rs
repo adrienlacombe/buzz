@@ -22,9 +22,26 @@
 //! `tx_hash_bytes`. Sponsored and direct transactions therefore differ only in
 //! *which* felt is signed, never in the signing scheme.
 
-use starknet_core::types::Felt;
-use starknet_core::utils::cairo_short_string_to_felt;
+pub use starknet_core::types::Felt;
+use starknet_core::utils::{cairo_short_string_to_felt, get_selector_from_name};
 use starknet_crypto::poseidon_hash_many;
+
+/// Parse a hex felt (`0x…` or bare hex). Used by desktop markets wiring without
+/// taking a direct `starknet-core` dependency in Tauri.
+pub fn felt_from_hex(value: &str) -> Result<Felt, OutsideExecutionError> {
+    Felt::from_hex(value.trim()).map_err(|_| OutsideExecutionError::InvalidFelt {
+        field: "felt",
+        value: value.to_string(),
+    })
+}
+
+/// Entry-point selector for a Cairo function name.
+pub fn selector_from_name(entrypoint: &str) -> Result<Felt, OutsideExecutionError> {
+    get_selector_from_name(entrypoint).map_err(|_| OutsideExecutionError::InvalidFelt {
+        field: "entrypoint",
+        value: entrypoint.to_string(),
+    })
+}
 
 /// `sn_keccak` of the SNIP-12 `StarknetDomain` type string.
 ///
@@ -308,6 +325,17 @@ mod tests {
         let mut selector = base.clone();
         selector.calls[0].selector = Felt::from(0x9999_u32);
         assert_ne!(baseline, selector.message_hash(addr, "SN_MAIN").unwrap());
+    }
+
+    #[test]
+    fn felt_from_hex_and_selector_round_trip_basics() {
+        assert_eq!(felt_from_hex("0x1").unwrap(), Felt::ONE);
+        assert_eq!(felt_from_hex("1").unwrap(), Felt::ONE);
+        assert!(felt_from_hex("not-a-felt").is_err());
+        let transfer = selector_from_name("transfer").unwrap();
+        assert_ne!(transfer, Felt::ZERO);
+        // Distinct entrypoints must hash to distinct selectors.
+        assert_ne!(transfer, selector_from_name("approve").unwrap());
     }
 
     #[test]

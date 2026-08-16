@@ -22,8 +22,7 @@ pub const DIFFICULTY_MARKET: &str =
     "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
 
 /// Distribution factory (mainnet).
-pub const FACTORY: &str =
-    "0x046b18bbc9b0de137e4f919100ee6b61bf37d345f8099ff7f982b7eaffcab62d";
+pub const FACTORY: &str = "0x046b18bbc9b0de137e4f919100ee6b61bf37d345f8099ff7f982b7eaffcab62d";
 
 /// Declared `NostrAccount` class hash (mainnet).
 pub const NOSTR_ACCOUNT_CLASS_HASH: &str =
@@ -248,10 +247,7 @@ mod tests {
         assert!(PRODUCT_INDEXER_URL.starts_with("https://"));
         assert!(!PRODUCT_INDEXER_URL.contains("127.0.0.1"));
         assert!(!PRODUCT_INDEXER_URL.contains("localhost"));
-        assert_eq!(
-            resolve_indexer_url_from(None).unwrap(),
-            PRODUCT_INDEXER_URL
-        );
+        assert_eq!(resolve_indexer_url_from(None).unwrap(), PRODUCT_INDEXER_URL);
         assert_eq!(
             resolve_indexer_url_from(Some("")).unwrap(),
             PRODUCT_INDEXER_URL

@@ -11,15 +11,13 @@
  *   5. Return `calls = [approve(+5%), trade]` — caller prepends
  *      `strkBTC.transfer(feeRecipient, feeAmount)` then `...trade.calls`
  *
- * Do NOT call SDK `executeTrade()`. Do NOT bump approve /
+ * `supplied_collateral` is the **user's** BTC amount (must cover the solver
+ * minimum). Do NOT call SDK `executeTrade()`. Do NOT bump approve /
  * `supplied_collateral` for the wallet fee.
  */
 
 import { LOGNORMAL_AMM_ABI } from "@the-situation/artifacts";
-import {
-  LognormalDistribution,
-  SQ128x128,
-} from "@the-situation/core";
+import { LognormalDistribution, SQ128x128 } from "@the-situation/core";
 import { findLognormalMinimum } from "@the-situation/collateral";
 import { buildApproveCall, toHexAddress } from "@the-situation/utils";
 import { CallData, type Call } from "starknet";
@@ -44,9 +42,14 @@ export type MarketSnapshot = {
 export type PrepareLognormalTradeOptions = {
   /** Raw Bitcoin difficulty D from the UI axis (NOT ln). */
   rawDifficulty: number;
+  /**
+   * User-specified collateral in BTC (8dp human units). This is what gets
+   * spent / supplied — not the solver's minimum alone.
+   */
+  collateralBtc: number;
   /** Optional target variance in log-space; defaults to current. */
   targetVariance?: number;
-  /** Buffer percent on collateral (default 1%). */
+  /** Buffer percent applied when checking the solver floor (default 1%). */
   bufferPercent?: number;
   /** Current market snapshot (log-space). */
   market: MarketSnapshot;
@@ -59,9 +62,11 @@ export type PreparedLognormalTrade = {
   targetVariance: number;
   targetSigma: number;
   xStar: number;
-  /** Buffered collateral in human token units. */
+  /** User collateral in human token units (what is supplied). */
   collateral: number;
-  /** Raw 8dp token amount for approve / fee math. */
+  /** Solver minimum (scaled + buffered) the user must cover. */
+  minimumCollateral: number;
+  /** Raw 8dp token amount for approve / fee math (= user amount). */
   tokenAmount: bigint;
   /** [approveCall, tradeCall] — prepend feeCall before execute. */
   calls: Call[];
@@ -107,15 +112,24 @@ function toAbiSq128(raw: {
   };
 }
 
+function requireSq(value: number, label: string): SQ128x128 {
+  const sq = SQ128x128.fromNumber(value);
+  if (!sq) {
+    throw new Error(`Failed to encode ${label}`);
+  }
+  return sq;
+}
+
 /**
  * Prepare a lognormal curve bet. `rawDifficulty` is the UI axis value D;
- * internally the candidate mean is ln(D).
+ * internally the candidate mean is ln(D). Collateral spent is `collateralBtc`.
  */
 export function prepareLognormalTrade(
   options: PrepareLognormalTradeOptions,
 ): PreparedLognormalTrade {
   const {
     rawDifficulty,
+    collateralBtc,
     market,
     bufferPercent = 1,
     marketAddress = DIFFICULTY_MARKET,
@@ -124,6 +138,9 @@ export function prepareLognormalTrade(
   if (!(Number.isFinite(rawDifficulty) && rawDifficulty > 0)) {
     throw new Error("Target difficulty must be a positive number");
   }
+  if (!(Number.isFinite(collateralBtc) && collateralBtc > 0)) {
+    throw new Error("Collateral must be a positive BTC amount");
+  }
 
   const targetMu = Math.log(rawDifficulty);
   const targetVariance = options.targetVariance ?? market.variance;
@@ -131,40 +148,42 @@ export function prepareLognormalTrade(
     throw new Error("Invalid target variance");
   }
 
-  const current = LognormalDistribution.create(
-    SQ128x128.fromNumber(market.mu)!,
-    SQ128x128.fromNumber(market.variance)!,
-  );
-  const candidate = LognormalDistribution.create(
-    SQ128x128.fromNumber(targetMu)!,
-    SQ128x128.fromNumber(targetVariance)!,
-  );
+  const currentMu = requireSq(market.mu, "market.mu");
+  const currentVar = requireSq(market.variance, "market.variance");
+  const candidateMu = requireSq(targetMu, "targetMu");
+  const candidateVar = requireSq(targetVariance, "targetVariance");
+
+  const current = LognormalDistribution.create(currentMu, currentVar);
+  const candidate = LognormalDistribution.create(candidateMu, candidateVar);
   if (!(current && candidate)) {
     throw new Error("Failed to build lognormal distributions");
   }
 
-  // Locate x* with the package Newton helper, then scale collateral by λ.
+  // Locate x* with the package Newton helper; user amount must cover the floor.
   const min = findLognormalMinimum(current, candidate);
   if (!min.converged || !Number.isFinite(min.collateral)) {
     throw new Error("Collateral solver failed for this target");
   }
 
-  const lambdaF = lognormalLambda(market.mu, market.variance, market.effectiveK);
-  const lambdaG = lognormalLambda(
-    targetMu,
-    targetVariance,
+  const lambdaF = lognormalLambda(
+    market.mu,
+    market.variance,
     market.effectiveK,
   );
-  // Scale the PDF-difference collateral into market units via mean λ.
+  const lambdaG = lognormalLambda(targetMu, targetVariance, market.effectiveK);
   const scale = Math.max(lambdaF, lambdaG, market.effectiveK);
-  const scaledCollateral = Math.max(0, min.collateral) * scale;
-  const buffered = scaledCollateral * (1 + bufferPercent / 100);
+  const scaledMinimum = Math.max(0, min.collateral) * scale;
+  const minimumCollateral = scaledMinimum * (1 + bufferPercent / 100);
 
-  const collateralSq = SQ128x128.fromNumber(buffered);
-  const xStarSq = SQ128x128.fromNumber(min.xStar);
-  if (!(collateralSq && xStarSq)) {
-    throw new Error("Failed to encode collateral / x*");
+  if (collateralBtc + Number.EPSILON < minimumCollateral) {
+    throw new Error(
+      `Collateral too low: need at least ${minimumCollateral.toFixed(6)} BTC for this target`,
+    );
   }
+
+  // Spend the user's amount — not only the solver minimum.
+  const collateralSq = requireSq(collateralBtc, "collateralBtc");
+  const xStarSq = requireSq(min.xStar, "xStar");
 
   const hints = computeLognormalHints(candidate.sigma);
   if (!hints) {
@@ -192,7 +211,7 @@ export function prepareLognormalTrade(
     calldata: tradeCalldata,
   };
 
-  const tokenAmount = toTokenAmountUp(buffered, COLLATERAL_DECIMALS);
+  const tokenAmount = toTokenAmountUp(collateralBtc, COLLATERAL_DECIMALS);
   if (tokenAmount < MIN_TRADE_RAW) {
     throw new Error(
       `Minimum trade is ${(Number(MIN_TRADE_RAW) / 1e8).toFixed(6)} BTC`,
@@ -211,9 +230,10 @@ export function prepareLognormalTrade(
     targetVariance,
     targetSigma: candidate.sigma.toNumber(),
     xStar: min.xStar,
-    collateral: buffered,
+    collateral: collateralBtc,
+    minimumCollateral,
     tokenAmount,
     calls: [approveCall, tradeCall],
-    summary: `Target difficulty ${rawDifficulty.toExponential(4)} (ln=${targetMu.toFixed(4)}), collateral ${buffered.toFixed(6)} BTC`,
+    summary: `Target difficulty ${rawDifficulty.toExponential(4)} (ln=${targetMu.toFixed(4)}), collateral ${collateralBtc.toFixed(6)} BTC`,
   };
 }

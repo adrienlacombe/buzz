@@ -14,15 +14,13 @@ use buzz_core_pkg::markets::{
     HUMAN_IDENTITY_KEYRING_NAME, NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
-    any_caller, OutsideCall, OutsideExecution,
+    any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
 };
 use buzz_core_pkg::starknet_account::{
     account_address_from_hex, constructor_calldata, pubkey_felts, sign_tx_hash, DEPLOY_SALT,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use starknet_core::types::Felt;
-use starknet_core::utils::get_selector_from_name;
 use tauri::State;
 
 /// A Starknet call as the frontend prepares it (no secrets).
@@ -58,13 +56,12 @@ pub struct PlaceBetResult {
 }
 
 fn felt_hex(v: &str) -> Result<Felt, String> {
-    Felt::from_hex(v.trim()).map_err(|e| format!("invalid felt {v:?}: {e}"))
+    felt_from_hex(v).map_err(|e| e.to_string())
 }
 
 fn parse_call(call: &PreparedCall) -> Result<OutsideCall, String> {
     let to = felt_hex(&call.contract_address)?;
-    let selector = get_selector_from_name(&call.entrypoint)
-        .map_err(|e| format!("bad entrypoint {}: {e}", call.entrypoint))?;
+    let selector = selector_from_name(&call.entrypoint).map_err(|e| e.to_string())?;
     let mut calldata = Vec::with_capacity(call.calldata.len());
     for c in &call.calldata {
         calldata.push(felt_hex(c)?);

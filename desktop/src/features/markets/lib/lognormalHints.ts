@@ -17,9 +17,12 @@ export type LognormalSqrtHints = {
 /**
  * Both denoms = isqrt(2 * sigma * sqrt_pi), identical limbs.
  * Do NOT use normal computeHints (two different denoms → revert).
+ *
+ * `SQ128x128` is the class type itself (private constructor makes
+ * `InstanceType<typeof SQ128x128>` invalid under TS).
  */
 export function computeLognormalHints(
-  sigma: InstanceType<typeof SQ128x128>,
+  sigma: SQ128x128,
 ): LognormalSqrtHints | null {
   const denom = computeL2NormDenomHint(sigma);
   if (!denom) {

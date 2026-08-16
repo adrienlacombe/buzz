@@ -81,14 +81,16 @@ export async function fetchIndexerMarkets(
   return (await res.json()) as IndexerMarket[];
 }
 
+/**
+ * Fail closed: only the difficulty market address matches.
+ * Never substitute `markets[0]` under the difficulty title.
+ */
 export function findDifficultyMarket(
   markets: IndexerMarket[],
   difficultyMarketAddress: string,
 ): IndexerMarket | null {
   const want = normalizeMarketAddress(difficultyMarketAddress);
   return (
-    markets.find((m) => normalizeMarketAddress(m.address) === want) ??
-    markets[0] ??
-    null
+    markets.find((m) => normalizeMarketAddress(m.address) === want) ?? null
   );
 }

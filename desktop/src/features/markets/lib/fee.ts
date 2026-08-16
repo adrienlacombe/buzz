@@ -8,8 +8,7 @@ export function walletFeeAmount(tokenAmount: bigint): bigint {
   if (tokenAmount <= 0n) {
     return 0n;
   }
-  const fee =
-    (tokenAmount * BigInt(WALLET_FEE_BPS) + 9_999n) / 10_000n;
+  const fee = (tokenAmount * BigInt(WALLET_FEE_BPS) + 9_999n) / 10_000n;
   return fee < 1n ? 1n : fee;
 }
 

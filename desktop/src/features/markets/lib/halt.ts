@@ -1,7 +1,4 @@
-import {
-  HALT_BLOCKS_BEFORE_RETARGET,
-  RETARGET_INTERVAL,
-} from "./constants";
+import { HALT_BLOCKS_BEFORE_RETARGET, RETARGET_INTERVAL } from "./constants";
 
 /** Next retarget height strictly after `currentHeight`. */
 export function nextRetargetHeight(currentHeight: number): number {

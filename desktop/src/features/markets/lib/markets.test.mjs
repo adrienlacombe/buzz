@@ -15,7 +15,9 @@ function walletFeeAmount(tokenAmount) {
 }
 
 function nextRetargetHeight(currentHeight) {
-  return (Math.floor(currentHeight / RETARGET_INTERVAL) + 1) * RETARGET_INTERVAL;
+  return (
+    (Math.floor(currentHeight / RETARGET_INTERVAL) + 1) * RETARGET_INTERVAL
+  );
 }
 
 function haltHeight(currentHeight) {
@@ -49,9 +51,7 @@ function normalizeMarketAddress(address) {
 function findDifficultyMarket(markets, difficultyMarketAddress) {
   const want = normalizeMarketAddress(difficultyMarketAddress);
   return (
-    markets.find((m) => normalizeMarketAddress(m.address) === want) ??
-    markets[0] ??
-    null
+    markets.find((m) => normalizeMarketAddress(m.address) === want) ?? null
   );
 }
 
@@ -123,5 +123,16 @@ describe("INDEXER_URL", () => {
     assert.equal(found?.title, "Bitcoin difficulty after next retarget");
     assert.equal(found?.marketType, "lognormal");
     assert.equal(found?.xAxisLabel, "Difficulty");
+  });
+
+  it("fails closed when difficulty market is missing (no markets[0] substitute)", () => {
+    const other = {
+      address: "0xabc",
+      title: "Some other market",
+      marketType: "normal",
+      xAxisLabel: "X",
+    };
+    assert.equal(findDifficultyMarket([other], DIFFICULTY_MARKET), null);
+    assert.equal(findDifficultyMarket([], DIFFICULTY_MARKET), null);
   });
 });

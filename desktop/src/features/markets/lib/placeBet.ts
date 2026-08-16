@@ -18,6 +18,8 @@ import {
 
 export type PlaceBetParams = {
   rawDifficulty: number;
+  /** User BTC amount to spend (required). */
+  collateralBtc: number;
   market: MarketSnapshot;
   bitcoinHeight: number;
   targetVariance?: number;
@@ -42,10 +44,13 @@ export function buildBetCalls(prepared: PreparedLognormalTrade): Call[] {
 /**
  * Prepare and submit a curve bet. Signing stays in Rust via `place_bet`.
  */
-export async function placeBet(params: PlaceBetParams): Promise<PlaceBetResult> {
+export async function placeBet(
+  params: PlaceBetParams,
+): Promise<PlaceBetResult> {
   // prepareTrade({ targetMean: ln(D) }) equivalent for lognormal (same denoms).
   const prepared = prepareLognormalTrade({
     rawDifficulty: params.rawDifficulty,
+    collateralBtc: params.collateralBtc,
     market: params.market,
     targetVariance: params.targetVariance,
     bufferPercent: params.bufferPercent,

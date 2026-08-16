@@ -27,7 +27,7 @@ mod legacy_storage;
 mod link_preview;
 mod managed_agent_definition;
 pub(crate) mod markets;
-mod media;
+pub(crate) mod media;
 mod media_animated;
 mod media_download;
 mod media_gif;

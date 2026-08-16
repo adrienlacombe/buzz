@@ -12,17 +12,17 @@ import {
   LN_MIN_SATS,
   MARKET_TITLE,
   MIN_TRADE_RAW,
-} from "./lib/constants";
-import { createFundLightningQuote } from "./lib/fundLightning";
-import { bettingHalted } from "./lib/halt";
+} from "../lib/constants";
+import { createFundLightningQuote } from "../lib/fundLightning";
+import { bettingHalted } from "../lib/halt";
 import {
   fetchIndexerHealth,
   fetchIndexerMarkets,
   findDifficultyMarket,
   resolveIndexerUrl,
   type IndexerMarket,
-} from "./lib/indexer";
-import { placeBet } from "./lib/placeBet";
+} from "../lib/indexer";
+import { placeBet } from "../lib/placeBet";
 
 type Tab = "bet" | "fund";
 
@@ -55,15 +55,19 @@ export function MarketsScreen() {
         const base = resolveIndexerUrl();
         await fetchIndexerHealth(base);
         const markets = await fetchIndexerMarkets(base);
-        // Indexer returns unpadded address (0x23b3…); match felt-normalized.
         const found = findDifficultyMarket(markets, DIFFICULTY_MARKET);
+        if (!found) {
+          throw new Error(
+            "Difficulty market not listed by indexer — refusing substitute",
+          );
+        }
         const tip = await fetchBitcoinHeight();
         if (cancelled) return;
         setIndexerHost(base);
         setMarket(found);
         setHeight(tip);
         setHalted(bettingHalted(tip));
-        if (found?.state?.mean != null) {
+        if (found.state?.mean != null) {
           // Indexer mean for lognormal is μ = ln(D); show D on the axis.
           const d = Math.exp(found.state.mean);
           if (Number.isFinite(d) && d > 0) {
@@ -72,6 +76,7 @@ export function MarketsScreen() {
         }
       } catch (e) {
         if (!cancelled) {
+          setMarket(null);
           setLoadError(e instanceof Error ? e.message : String(e));
         }
       }
@@ -102,9 +107,7 @@ export function MarketsScreen() {
     }
     const raw = BigInt(Math.ceil(collateral * 1e8));
     if (raw < MIN_TRADE_RAW) {
-      toast.error(
-        `Minimum is ${(Number(MIN_TRADE_RAW) / 1e8).toFixed(6)} BTC`,
-      );
+      toast.error(`Minimum is ${(Number(MIN_TRADE_RAW) / 1e8).toFixed(6)} BTC`);
       return;
     }
 
@@ -112,6 +115,7 @@ export function MarketsScreen() {
     try {
       const result = await placeBet({
         rawDifficulty,
+        collateralBtc: collateral,
         bitcoinHeight: height,
         market: {
           mu: market.state.mean ?? 0,
@@ -201,24 +205,31 @@ export function MarketsScreen() {
             Pick a target mean on the raw Bitcoin difficulty axis. Collateral is
             BTC. Betting pauses 24 blocks before each difficulty retarget.
           </p>
-          <label className="block space-y-1 text-sm">
-            <span>Target difficulty (D)</span>
+          <div className="block space-y-1 text-sm">
+            <label htmlFor="markets-target-difficulty">
+              Target difficulty (D)
+            </label>
             <Input
+              id="markets-target-difficulty"
               value={targetDifficulty}
               onChange={(e) => setTargetDifficulty(e.target.value)}
               placeholder="e.g. 1.1e14"
-              disabled={halted || busy}
+              disabled={halted || busy || !market}
             />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span>Collateral (BTC)</span>
+          </div>
+          <div className="block space-y-1 text-sm">
+            <label htmlFor="markets-collateral-btc">Collateral (BTC)</label>
             <Input
+              id="markets-collateral-btc"
               value={collateralBtc}
               onChange={(e) => setCollateralBtc(e.target.value)}
-              disabled={halted || busy}
+              disabled={halted || busy || !market}
             />
-          </label>
-          <Button onClick={() => void onPlaceBet()} disabled={halted || busy}>
+          </div>
+          <Button
+            onClick={() => void onPlaceBet()}
+            disabled={halted || busy || !market}
+          >
             {busy ? "Placing…" : halted ? "Paused until retarget" : "Place bet"}
           </Button>
         </section>
@@ -228,14 +239,15 @@ export function MarketsScreen() {
             Fund with Lightning. Pays into your wallet as BTC. This screen never
             places a bet.
           </p>
-          <label className="block space-y-1 text-sm">
-            <span>Amount (sats)</span>
+          <div className="block space-y-1 text-sm">
+            <label htmlFor="markets-fund-sats">Amount (sats)</label>
             <Input
+              id="markets-fund-sats"
               value={fundSats}
               onChange={(e) => setFundSats(e.target.value)}
               disabled={busy}
             />
-          </label>
+          </div>
           <Button onClick={() => void onFund()} disabled={busy}>
             {busy ? "Creating invoice…" : "Fund with Lightning"}
           </Button>

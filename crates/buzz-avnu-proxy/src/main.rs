@@ -152,10 +152,7 @@ async fn proxy_rpc(State(state): State<Arc<AppState>>, body: Bytes) -> Response 
     }
 
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "content-type",
-        HeaderValue::from_static("application/json"),
-    );
+    headers.insert("content-type", HeaderValue::from_static("application/json"));
     headers.insert("accept", HeaderValue::from_static("*/*"));
     // Inject the secret server-side. Never echo it back.
     match HeaderValue::from_str(&state.api_key) {
@@ -176,7 +173,11 @@ async fn proxy_rpc(State(state): State<Arc<AppState>>, body: Bytes) -> Response 
         }
     }
 
-    let upstream = state.client.post(&state.upstream).headers(headers).body(body);
+    let upstream = state
+        .client
+        .post(&state.upstream)
+        .headers(headers)
+        .body(body);
 
     match upstream.send().await {
         Ok(resp) => {

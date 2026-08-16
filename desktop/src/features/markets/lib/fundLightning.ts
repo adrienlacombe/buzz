@@ -3,19 +3,62 @@
  *
  * This module is Fund-screen only. Betting never imports it — place_bet is
  * 100% hidden Starknet calls with no LN invoice, zap, or Atomiq swap.
+ *
+ * Atomiq packages ship `/// <reference types="node" />` in their .d.ts files.
+ * A static import would pull Node timer globals into the whole desktop
+ * typecheck (breaking DOM `setTimeout` typing in unrelated files). Load them
+ * through an opaque dynamic import so tsc cannot resolve those refs.
  */
-
-import {
-  BitcoinNetwork,
-  SwapAmountType,
-  SwapperFactory,
-} from "@atomiqlabs/sdk";
-import { StarknetInitializer } from "@atomiqlabs/chain-starknet";
 
 import { LN_MAX_SATS, LN_MIN_SATS } from "./constants";
 
-const Factory = new SwapperFactory([StarknetInitializer] as const);
-const Tokens = Factory.Tokens;
+/** Opaque module loader — intentionally unresolvable to package .d.ts. */
+async function importAtomiq(): Promise<{
+  // Minimal structural surface we need; keep loose to avoid Node globals.
+  BitcoinNetwork: { MAINNET: unknown };
+  SwapAmountType: { EXACT_IN: unknown };
+  SwapperFactory: new (
+    initializers: unknown[],
+  ) => {
+    Tokens: {
+      BITCOIN: { BTCLN: unknown };
+      STARKNET: { strkBTC: unknown };
+    };
+    newSwapper: (cfg: unknown) => PromiseLike<{
+      init: () => Promise<void>;
+      swap: (...args: unknown[]) => Promise<AtomiqSwap>;
+    }> & {
+      init: () => Promise<void>;
+      swap: (...args: unknown[]) => Promise<AtomiqSwap>;
+    };
+  };
+  StarknetInitializer: unknown;
+}> {
+  const dynamicImport = new Function("m", "return import(m)") as (
+    m: string,
+  ) => Promise<Record<string, unknown>>;
+  const [sdk, chain] = await Promise.all([
+    dynamicImport("@atomiqlabs/sdk"),
+    dynamicImport("@atomiqlabs/chain-starknet"),
+  ]);
+  return {
+    BitcoinNetwork: sdk.BitcoinNetwork as { MAINNET: unknown },
+    SwapAmountType: sdk.SwapAmountType as { EXACT_IN: unknown },
+    SwapperFactory: sdk.SwapperFactory as never,
+    StarknetInitializer: chain.StarknetInitializer,
+  };
+}
+
+type AtomiqSwap = {
+  getAddress: () => string;
+  getHyperlink: () => string;
+  getOutput: () => { rawAmount: string | number | bigint };
+  getQuoteExpiry: () => number;
+  execute: (
+    wallet: { payInvoice: () => Promise<string> },
+    opts: Record<string, unknown>,
+  ) => Promise<unknown>;
+};
 
 export type FundLightningQuote = {
   invoice: string;
@@ -26,8 +69,7 @@ export type FundLightningQuote = {
   outputRaw: bigint;
   expiryMs: number;
   /** Underlying swap handle for execute/wait. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  swap: any;
+  swap: AtomiqSwap;
 };
 
 export type FundLightningOptions = {
@@ -59,13 +101,19 @@ export async function createFundLightningQuote(
 ): Promise<FundLightningQuote> {
   assertSatsInRange(options.amountSats);
 
+  const atomiq = await importAtomiq();
+  const Factory = new atomiq.SwapperFactory([
+    atomiq.StarknetInitializer,
+  ] as never[]);
+  const Tokens = Factory.Tokens;
+
   const swapper = Factory.newSwapper({
     chains: {
       STARKNET: {
         rpcUrl: options.starknetRpcUrl,
       },
     },
-    bitcoinNetwork: BitcoinNetwork.MAINNET,
+    bitcoinNetwork: atomiq.BitcoinNetwork.MAINNET,
   });
   await swapper.init();
 
@@ -76,7 +124,7 @@ export async function createFundLightningQuote(
     Tokens.BITCOIN.BTCLN,
     Tokens.STARKNET.strkBTC,
     options.amountSats,
-    SwapAmountType.EXACT_IN,
+    atomiq.SwapAmountType.EXACT_IN,
     undefined,
     options.destinationAddress,
     swapOpts,
@@ -97,8 +145,7 @@ export async function createFundLightningQuote(
  * Fund path only — never call from place_bet.
  */
 export async function waitFundLightningSettlement(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  swap: any,
+  swap: AtomiqSwap,
 ): Promise<{ automatic: boolean; claimTxId?: string }> {
   const automatic = await swap.execute(
     {

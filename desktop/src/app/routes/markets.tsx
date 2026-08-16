@@ -14,7 +14,9 @@ export const Route = createFileRoute("/markets")({
 
 function MarketsRouteComponent() {
   return (
-    <React.Suspense fallback={<ViewLoadingFallback includeHeader kind="home" />}>
+    <React.Suspense
+      fallback={<ViewLoadingFallback includeHeader kind="projects" />}
+    >
       <MarketsScreen />
     </React.Suspense>
   );
