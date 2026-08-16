@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DIFFICULTY_MARKET, PRODUCT_INDEXER_URL } from "./constants.ts";
+import {
+  DIFFICULTY_MARKET,
+  PRODUCT_AVNU_PROXY_URL,
+  PRODUCT_INDEXER_URL,
+} from "./constants.ts";
+import { resolveAvnuProxyUrl } from "./avnuProxy.ts";
 import { walletFeeAmount } from "./fee.ts";
 import {
   bettingHalted,
@@ -102,5 +107,35 @@ describe("INDEXER_URL", () => {
     };
     assert.equal(findDifficultyMarket([other], DIFFICULTY_MARKET), null);
     assert.equal(findDifficultyMarket([], DIFFICULTY_MARKET), null);
+  });
+});
+
+describe("AVNU_PROXY_URL", () => {
+  it("uses product host; refuses localhost default", () => {
+    assert.equal(
+      PRODUCT_AVNU_PROXY_URL,
+      "https://paymaster.bitcoinmarkets.app",
+    );
+    assert.equal(resolveAvnuProxyUrl({}), PRODUCT_AVNU_PROXY_URL);
+    assert.equal(
+      resolveAvnuProxyUrl({
+        AVNU_PROXY_URL: "https://paymaster.bitcoinmarkets.app/",
+      }),
+      "https://paymaster.bitcoinmarkets.app",
+    );
+    assert.equal(
+      resolveAvnuProxyUrl({
+        VITE_AVNU_PROXY_URL: "https://paymaster.bitcoinmarkets.app/",
+      }),
+      "https://paymaster.bitcoinmarkets.app",
+    );
+    assert.throws(
+      () => resolveAvnuProxyUrl({ AVNU_PROXY_URL: "http://127.0.0.1:8788" }),
+      /must not be loopback/,
+    );
+    assert.throws(
+      () => resolveAvnuProxyUrl({ AVNU_PROXY_URL: "http://localhost:8788" }),
+      /must not be loopback/,
+    );
   });
 });

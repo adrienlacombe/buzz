@@ -176,15 +176,19 @@ async fn avnu_rpc(method: &str, params: Value) -> Result<Value, String> {
         "method": method,
         "params": params,
     });
+    // `avnu_proxy_url` already refuses loopback; non-loopback /rpc requires Bearer.
     let url = format!("{}/rpc", avnu_proxy_url()?);
+    let token = std::env::var("AVNU_PROXY_AUTH_TOKEN")
+        .map(|t| t.trim().to_string())
+        .ok()
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| {
+            "AVNU_PROXY_AUTH_TOKEN is required for non-loopback proxy /rpc \
+             (runtime-only from process env; never bake into the client)"
+                .to_string()
+        })?;
     let client = reqwest::Client::new();
-    let mut req = client.post(&url).json(&body);
-    if let Ok(token) = std::env::var("AVNU_PROXY_AUTH_TOKEN") {
-        let token = token.trim();
-        if !token.is_empty() {
-            req = req.bearer_auth(token);
-        }
-    }
+    let req = client.post(&url).json(&body).bearer_auth(token);
     let resp = req
         .send()
         .await

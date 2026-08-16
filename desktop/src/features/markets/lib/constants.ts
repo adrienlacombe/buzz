@@ -15,6 +15,15 @@
  */
 export const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
 
+/**
+ * Product AVNU SNIP-29 proxy host. `AVNU_PROXY_URL` / `VITE_AVNU_PROXY_URL`
+ * may set this; when unset the client uses this public host. **No localhost
+ * default** — loopback (`127.0.0.1:8788`) must not ship.
+ *
+ * Never put `AVNU_API_KEY` or proxy auth tokens in this repo/client.
+ */
+export const PRODUCT_AVNU_PROXY_URL = "https://paymaster.bitcoinmarkets.app";
+
 /** Live LOGNORMAL difficulty market (padded felt). */
 export const DIFFICULTY_MARKET =
   "0x023b3a7bbe48a905ceadc17cd21b6b71fedaf90ee1218e462b106e01703b9cc8";
