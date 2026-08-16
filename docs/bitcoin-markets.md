@@ -29,8 +29,12 @@ screen uses Atomiq `@atomiqlabs/sdk` `FROM_BTCLN_AUTO` into that address
 3. Rust signs SNIP-12 OutsideExecution with BIP-340 (`sign_tx_hash`) and
    submits via the AVNU proxy (`feeMode: sponsored`).
 
-Halt: wallet disables betting 24 Bitcoin blocks before the next retarget
-height (every 2016 blocks).
+Halt: wallet-owned (not indexer). Product signal is mempool.space
+`GET /api/v1/difficulty-adjustment` — disable betting when
+`remainingBlocks <= 24` (next retarget − 24). Tauri
+`difficulty_halt_status` feeds the UI; `place_bet` re-fetches and refuses.
+2016-block tip-height math remains as a unit-test / fallback helper only.
+Operator settle/pause after retarget is out of scope here.
 
 ## INDEXER_URL
 

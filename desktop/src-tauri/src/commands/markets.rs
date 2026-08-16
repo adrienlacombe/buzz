@@ -10,8 +10,9 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    assert_human_keyring_name, betting_halted, resolve_indexer_url, wallet_fee_amount,
-    HUMAN_IDENTITY_KEYRING_NAME, NOSTR_ACCOUNT_CLASS_HASH,
+    assert_human_keyring_name, betting_halted, betting_halted_by_remaining_blocks,
+    resolve_indexer_url, wallet_fee_amount, HUMAN_IDENTITY_KEYRING_NAME,
+    NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
     any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
@@ -53,6 +54,95 @@ pub struct PlaceBetResult {
     pub tx_hash: String,
     pub fee_amount: String,
     pub account_address: String,
+}
+
+/// Live wallet-owned halt signal from mempool.space (not the indexer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DifficultyHaltStatus {
+    /// Blocks remaining until the next difficulty retarget.
+    pub remaining_blocks: u64,
+    /// Next retarget height from mempool.space when present.
+    pub next_retarget_height: Option<u64>,
+    /// `true` when `remaining_blocks <= 24`.
+    pub halted: bool,
+    /// Source used: `mempool` (live) or `height_fallback` (2016-block math).
+    pub source: String,
+}
+
+const MEMPOOL_DIFFICULTY_ADJUSTMENT_URL: &str =
+    "https://mempool.space/api/v1/difficulty-adjustment";
+const MEMPOOL_TIP_HEIGHT_URL: &str = "https://mempool.space/api/blocks/tip/height";
+
+/// Fetch the product halt signal. Prefers mempool `remainingBlocks`; falls back
+/// to tip-height 2016-block math only if the adjustment endpoint is unavailable.
+async fn fetch_difficulty_halt_status() -> Result<DifficultyHaltStatus, String> {
+    let client = reqwest::Client::new();
+    match client
+        .get(MEMPOOL_DIFFICULTY_ADJUSTMENT_URL)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let value: Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("difficulty-adjustment JSON: {e}"))?;
+            let remaining = value
+                .get("remainingBlocks")
+                .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
+                .ok_or_else(|| {
+                    format!("difficulty-adjustment missing remainingBlocks: {value}")
+                })?;
+            let next = value
+                .get("nextRetargetHeight")
+                .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)));
+            Ok(DifficultyHaltStatus {
+                remaining_blocks: remaining,
+                next_retarget_height: next,
+                halted: betting_halted_by_remaining_blocks(remaining),
+                source: "mempool".into(),
+            })
+        }
+        Ok(resp) => Err(format!(
+            "difficulty-adjustment HTTP {}",
+            resp.status()
+        )),
+        Err(primary) => {
+            // Fallback: tip height + 2016-block math (still wallet-fetched).
+            let tip_resp = client
+                .get(MEMPOOL_TIP_HEIGHT_URL)
+                .send()
+                .await
+                .map_err(|e| {
+                    format!(
+                        "difficulty-adjustment failed ({primary}); tip height also failed: {e}"
+                    )
+                })?;
+            if !tip_resp.status().is_success() {
+                return Err(format!(
+                    "difficulty-adjustment failed ({primary}); tip height HTTP {}",
+                    tip_resp.status()
+                ));
+            }
+            let tip_text = tip_resp
+                .text()
+                .await
+                .map_err(|e| format!("tip height body: {e}"))?;
+            let tip: u64 = tip_text
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid tip height {tip_text:?}"))?;
+            let next = buzz_core_pkg::markets::next_retarget_height(tip);
+            let remaining = next.saturating_sub(tip);
+            Ok(DifficultyHaltStatus {
+                remaining_blocks: remaining,
+                next_retarget_height: Some(next),
+                halted: betting_halted(tip),
+                source: "height_fallback".into(),
+            })
+        }
+    }
 }
 
 fn felt_hex(v: &str) -> Result<Felt, String> {
@@ -226,6 +316,13 @@ fn typed_data_to_outside_execution(typed: &Value) -> Result<(OutsideExecution, S
     ))
 }
 
+/// Wallet-owned halt status for the Markets UI (`remainingBlocks` from
+/// mempool.space). Same fetch `place_bet` uses before signing.
+#[tauri::command]
+pub async fn difficulty_halt_status() -> Result<DifficultyHaltStatus, String> {
+    fetch_difficulty_halt_status().await
+}
+
 /// Fund-screen command: derive the human counterfactual address for Atomiq.
 ///
 /// Does **not** create an LN invoice, swap, or bet. The frontend uses Atomiq
@@ -254,17 +351,21 @@ pub async fn fund_lightning(
 }
 
 /// Bet-screen command: sign + submit prepared calls via AVNU (no Lightning).
+///
+/// Owns the halt check via mempool.space `remainingBlocks` (not a JS-supplied
+/// height). Refuses when `remainingBlocks <= 24`.
 #[tauri::command]
 pub async fn place_bet(
     state: State<'_, AppState>,
     calls: Vec<PreparedCall>,
-    bitcoin_height: u64,
     token_amount: String,
 ) -> Result<PlaceBetResult, String> {
-    if betting_halted(bitcoin_height) {
-        return Err(
-            "Betting is paused until after the next Bitcoin difficulty retarget".into(),
-        );
+    let halt = fetch_difficulty_halt_status().await?;
+    if halt.halted {
+        return Err(format!(
+            "Betting is paused until after the next Bitcoin difficulty retarget ({} blocks remaining)",
+            halt.remaining_blocks
+        ));
     }
     if calls.is_empty() {
         return Err("place_bet requires at least one call".into());

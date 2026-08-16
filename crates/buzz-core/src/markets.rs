@@ -109,13 +109,27 @@ pub fn halt_height(current_height: u64) -> u64 {
     next_retarget_height(current_height).saturating_sub(HALT_BLOCKS_BEFORE_RETARGET)
 }
 
-/// Whether betting is halted at `current_height`.
+/// Whether betting is halted given Bitcoin tip `current_height`.
 ///
-/// Halt is height-based, not wall-clock: once the tip reaches
+/// Height-based helper (not wall-clock): once the tip reaches
 /// `next_retarget - 24`, the wallet refuses new bets until after the retarget.
+///
+/// Product path prefers [`betting_halted_by_remaining_blocks`] from the live
+/// mempool.space difficulty-adjustment signal; keep this for unit tests and as
+/// a fallback when only a tip height is available.
 #[must_use]
 pub fn betting_halted(current_height: u64) -> bool {
     current_height >= halt_height(current_height)
+}
+
+/// Product halt signal: `remainingBlocks` from
+/// `GET https://mempool.space/api/v1/difficulty-adjustment`.
+///
+/// Halt when `remaining_blocks <= 24` (same wallet-owned rule as
+/// next-retarget − 24, expressed as blocks remaining).
+#[must_use]
+pub fn betting_halted_by_remaining_blocks(remaining_blocks: u64) -> bool {
+    remaining_blocks <= HALT_BLOCKS_BEFORE_RETARGET
 }
 
 /// Keyring names that may own a counterfactual Starknet `NostrAccount`.
@@ -214,6 +228,14 @@ mod tests {
         assert!(!betting_halted(2016));
         assert_eq!(halt_height(2016), 4008);
         assert!(betting_halted(4008));
+    }
+
+    #[test]
+    fn remaining_blocks_signal_halts_at_24() {
+        assert!(!betting_halted_by_remaining_blocks(25));
+        assert!(betting_halted_by_remaining_blocks(24));
+        assert!(betting_halted_by_remaining_blocks(1));
+        assert!(betting_halted_by_remaining_blocks(0));
     }
 
     #[test]

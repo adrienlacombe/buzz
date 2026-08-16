@@ -92,7 +92,9 @@ pub use identity_archive::*;
 pub use join_policy::*;
 pub use legacy_storage::*;
 pub use link_preview::*;
-pub use markets::{bitcoin_wallet_address, fund_lightning, place_bet};
+pub use markets::{
+    bitcoin_wallet_address, difficulty_halt_status, fund_lightning, place_bet,
+};
 pub use media::*;
 pub use media_download::*;
 pub use media_raw::*;

@@ -633,6 +633,7 @@ pub fn run() {
             get_identity,
             fund_lightning,
             place_bet,
+            difficulty_halt_status,
             bitcoin_wallet_address,
             get_nsec,
             generate_backup_passphrase,

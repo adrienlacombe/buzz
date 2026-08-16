@@ -3,6 +3,8 @@
  * prepend strkBTC.transfer(feeRecipient, feeAmount) and ...trade.calls.
  * No Lightning / Atomiq / invoice. No executeTrade(). No fee bump on
  * approve / supplied_collateral.
+ *
+ * Halt is wallet-owned inside Tauri `place_bet` (mempool remainingBlocks).
  */
 
 import type { Call } from "starknet";
@@ -10,6 +12,7 @@ import type { Call } from "starknet";
 import { invokeTauri } from "@/shared/api/tauri";
 
 import { buildFeeCall } from "./feeCall";
+import type { DifficultyHaltStatus } from "./halt";
 import {
   prepareLognormalTrade,
   type MarketSnapshot,
@@ -21,7 +24,6 @@ export type PlaceBetParams = {
   /** User BTC amount to spend (required). */
   collateralBtc: number;
   market: MarketSnapshot;
-  bitcoinHeight: number;
   targetVariance?: number;
   bufferPercent?: number;
 };
@@ -41,8 +43,13 @@ export function buildBetCalls(prepared: PreparedLognormalTrade): Call[] {
   return [feeCall, ...prepared.calls];
 }
 
+/** Same wallet-owned mempool signal `place_bet` uses before signing. */
+export async function fetchDifficultyHaltStatus(): Promise<DifficultyHaltStatus> {
+  return invokeTauri<DifficultyHaltStatus>("difficulty_halt_status");
+}
+
 /**
- * Prepare and submit a curve bet. Signing stays in Rust via `place_bet`.
+ * Prepare and submit a curve bet. Signing + halt stay in Rust via `place_bet`.
  */
 export async function placeBet(
   params: PlaceBetParams,
@@ -62,7 +69,6 @@ export async function placeBet(
     feeAmount: string;
   }>("place_bet", {
     calls,
-    bitcoinHeight: params.bitcoinHeight,
     tokenAmount: prepared.tokenAmount.toString(),
   });
 

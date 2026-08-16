@@ -28,6 +28,10 @@ function bettingHalted(currentHeight) {
   return currentHeight >= haltHeight(currentHeight);
 }
 
+function bettingHaltedByRemainingBlocks(remainingBlocks) {
+  return remainingBlocks <= HALT_BLOCKS_BEFORE_RETARGET;
+}
+
 function resolveIndexerUrl(env = {}) {
   const raw =
     (env.VITE_INDEXER_URL || "").trim() ||
@@ -88,6 +92,12 @@ describe("betting halt at height", () => {
     assert.equal(bettingHalted(2016), false);
     assert.equal(haltHeight(2016), 4008);
     assert.equal(bettingHalted(4008), true);
+  });
+
+  it("product signal: remainingBlocks <= 24", () => {
+    assert.equal(bettingHaltedByRemainingBlocks(25), false);
+    assert.equal(bettingHaltedByRemainingBlocks(24), true);
+    assert.equal(bettingHaltedByRemainingBlocks(0), true);
   });
 });
 

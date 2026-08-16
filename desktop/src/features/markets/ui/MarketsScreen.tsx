@@ -14,7 +14,6 @@ import {
   MIN_TRADE_RAW,
 } from "../lib/constants";
 import { createFundLightningQuote } from "../lib/fundLightning";
-import { bettingHalted } from "../lib/halt";
 import {
   fetchIndexerHealth,
   fetchIndexerMarkets,
@@ -22,22 +21,16 @@ import {
   resolveIndexerUrl,
   type IndexerMarket,
 } from "../lib/indexer";
-import { placeBet } from "../lib/placeBet";
+import { fetchDifficultyHaltStatus, placeBet } from "../lib/placeBet";
 
 type Tab = "bet" | "fund";
-
-async function fetchBitcoinHeight(): Promise<number> {
-  const res = await fetch("https://mempool.space/api/blocks/tip/height");
-  if (!res.ok) {
-    throw new Error("Could not read Bitcoin tip height");
-  }
-  return Number(await res.text());
-}
 
 export function MarketsScreen() {
   const [tab, setTab] = React.useState<Tab>("bet");
   const [market, setMarket] = React.useState<IndexerMarket | null>(null);
-  const [height, setHeight] = React.useState<number | null>(null);
+  const [remainingBlocks, setRemainingBlocks] = React.useState<number | null>(
+    null,
+  );
   const [halted, setHalted] = React.useState(false);
   const [targetDifficulty, setTargetDifficulty] = React.useState("");
   const [collateralBtc, setCollateralBtc] = React.useState("0.001");
@@ -61,12 +54,13 @@ export function MarketsScreen() {
             "Difficulty market not listed by indexer — refusing substitute",
           );
         }
-        const tip = await fetchBitcoinHeight();
+        // Wallet-owned halt signal (same path place_bet uses).
+        const halt = await fetchDifficultyHaltStatus();
         if (cancelled) return;
         setIndexerHost(base);
         setMarket(found);
-        setHeight(tip);
-        setHalted(bettingHalted(tip));
+        setRemainingBlocks(halt.remainingBlocks);
+        setHalted(halt.halted);
         if (found.state?.mean != null) {
           // Indexer mean for lognormal is μ = ln(D); show D on the axis.
           const d = Math.exp(found.state.mean);
@@ -87,7 +81,7 @@ export function MarketsScreen() {
   }, []);
 
   const onPlaceBet = React.useCallback(async () => {
-    if (!market?.state || height == null) {
+    if (!market?.state) {
       toast.error("Market not ready");
       return;
     }
@@ -116,7 +110,6 @@ export function MarketsScreen() {
       const result = await placeBet({
         rawDifficulty,
         collateralBtc: collateral,
-        bitcoinHeight: height,
         market: {
           mu: market.state.mean ?? 0,
           variance: market.state.variance ?? 0.01,
@@ -130,7 +123,7 @@ export function MarketsScreen() {
     } finally {
       setBusy(false);
     }
-  }, [collateralBtc, halted, height, market, targetDifficulty]);
+  }, [collateralBtc, halted, market, targetDifficulty]);
 
   const onFund = React.useCallback(async () => {
     const sats = BigInt(fundSats || "0");
@@ -173,7 +166,9 @@ export function MarketsScreen() {
           {indexerHost
             ? `Indexer ${indexerHost}`
             : "Indexer (INDEXER_URL / markets.bitcoinmarkets.app)"}
-          {height != null ? ` · Bitcoin tip ${height}` : null}
+          {remainingBlocks != null
+            ? ` · ${remainingBlocks} blocks to retarget`
+            : null}
           {halted ? " · betting paused near retarget" : null}
         </p>
       </header>
