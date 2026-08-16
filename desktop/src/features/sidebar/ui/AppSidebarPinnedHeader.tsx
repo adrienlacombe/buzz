@@ -113,13 +113,15 @@ export function AppSidebarPrimaryMenu({
     >
       <SidebarMenu className="pb-2">
         {/*
-          Inbox + Markets share one row so Markets stays in the primary menu
-          without adding a full extra h-8 above the custom-section DnD list
-          (smoke virtualization.spec.ts "06 — custom-section dnd reorder").
+          Inbox + Markets share one primary-menu row (same vertical height as
+          main) so custom-section DnD stays aligned — packing Markets as its
+          own row pushed sections down and broke virtualization.spec.ts "06".
+          Keep this row height-stable; do not add another full SidebarMenuItem
+          above the sortable list for Markets.
         */}
         <SidebarMenuItem className="p-0">
-          <div className="grid w-full grid-cols-2 gap-1">
-            <div className="relative min-w-0">
+          <div className="flex w-full items-center gap-1">
+            <div className="relative min-w-0 flex-1">
               <SidebarMenuButton
                 className="data-[active=true]:font-normal"
                 isActive={selectedView === "home"}
@@ -148,7 +150,7 @@ export function AppSidebarPrimaryMenu({
               ) : null}
             </div>
             <SidebarMenuButton
-              className="min-w-0 data-[active=true]:font-normal"
+              className="min-w-0 flex-1 data-[active=true]:font-normal"
               data-testid="open-markets-view"
               isActive={selectedView === "markets"}
               onClick={onSelectMarkets}

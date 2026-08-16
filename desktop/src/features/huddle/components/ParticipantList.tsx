@@ -197,9 +197,27 @@ export function HuddleParticipantsControl({
   }, [agentRosterKey, hasAgents]);
 
   React.useEffect(() => {
-    if (agentVoiceSettings) {
-      setResolvedAgentVoiceSettings(agentVoiceSettings);
-    }
+    if (!agentVoiceSettings) return;
+    setResolvedAgentVoiceSettings((current) => {
+      const nextKeys = Object.keys(agentVoiceSettings);
+      const currentKeys = Object.keys(current);
+      if (
+        nextKeys.length === currentKeys.length &&
+        nextKeys.every((key) => {
+          const next = agentVoiceSettings[key];
+          const prev = current[key];
+          return (
+            prev &&
+            next &&
+            prev.enabled === next.enabled &&
+            prev.voice_key === next.voice_key
+          );
+        })
+      ) {
+        return current;
+      }
+      return agentVoiceSettings;
+    });
   }, [agentVoiceSettings]);
   const identities = React.useMemo(
     () =>
@@ -309,6 +327,7 @@ export function HuddleParticipantsControl({
               <AgentVoiceMenu
                 agentPubkey={participant.pubkey}
                 displayName={participant.displayName}
+                key={`voice-${participant.pubkey}`}
                 onRemoveAgent={
                   onRemoveAgent
                     ? () => void onRemoveAgent(participant.pubkey)
