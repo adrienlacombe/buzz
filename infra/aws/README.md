@@ -205,7 +205,14 @@ sending, so anything that would revert is refused for free.
 ## Markets indexer (`@the-situation/indexer`)
 
 Off by default and safe to ignore until you want it. `indexer_enabled = false`
-means **no resources at all**, same count-gating lesson as paymaster.
+means **no resources on the create path**, same count-gating lesson as paymaster.
+
+Once enabled, setting `indexer_enabled = false` will **fail plan** because the
+indexer EFS carries `lifecycle.prevent_destroy`. That is intentional so CD cannot
+wipe the markets SQLite. To disable after enable you must first
+`terraform state rm 'aws_efs_file_system.indexer[0]'` (and accept losing the
+count-gated resources). "Off means no resources" is not a silent destroy of an
+existing DB. The indexer secret uses a 7-day recovery window for the same reason.
 
 This is **not** the relay. The container is `@the-situation/indexer` (npm 0.19.1);
 `indexer_image` is a separate variable and must not reuse `relay_image`. Mutable
@@ -264,7 +271,9 @@ Adrien applies AWS after the PR merges. Order matters — bootstrap first.
    `VOYAGER_API_KEY` (or `VOYAGER_API_KEYS`) is required to *start* in 0.19.1.
    A dummy is enough for `GET /api/markets` after an admin POST — that route is
    SQLite only. A real Voyager key is needed for event poll.
-4. Set `indexer_desired_count = 1` and apply again.
+4. Set `indexer_desired_count = 1` and apply again. The indexer ECS service does
+   **not** use `ignore_changes = [desired_count]` (unlike paymaster), so this
+   apply actually scales the service to one task.
 5. **After the task is healthy — register the v1 market** (not automated in Terraform):
 
    ```bash

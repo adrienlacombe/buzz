@@ -11,12 +11,14 @@
 #
 # ── Two properties worth understanding before changing anything here ──────────
 #
-# 1. OFF MEANS NO RESOURCES. Every resource in this file is gated on
+# 1. OFF MEANS NO RESOURCES ON CREATE. Every resource in this file is gated on
 #    `count = var.indexer_enabled ? 1 : 0`. That distinction was learned the hard
 #    way on paymaster.tf: creating IAM roles while desired_count sat at 0 still
 #    broke the next CI relay deploy with iam:PassRole, because bootstrap/ had not
 #    been applied. Adding an optional service must never be able to break the
-#    relay's pipeline.
+#    relay's pipeline. "Off means no resources" is the *create* path — once the
+#    indexer EFS exists, flipping enabled back to false is not a silent teardown
+#    (see indexer_enabled description / prevent_destroy below).
 #
 # 2. HTTP INGRESS, UNLIKE PAYMASTER. The indexer is a public HTTPS API. Its
 #    security group allows ingress from the ALB on port 8787 only. Host-header
@@ -31,7 +33,18 @@ variable "indexer_enabled" {
     Whether to create the markets indexer stack at all. Default false.
 
     Gates every resource in this file, not just how many tasks run. Off means no
-    resources — see property 1 at the top of this file.
+    resources on the *create* path — see property 1 at the top of this file.
+
+    Once enabled, setting indexer_enabled = false will fail plan because
+    aws_efs_file_system.indexer carries lifecycle.prevent_destroy. That is
+    intentional so CD cannot wipe the markets SQLite. To disable after enable
+    you must first:
+
+      terraform state rm 'aws_efs_file_system.indexer[0]'
+
+    (and accept losing the count-gated resources; the filesystem then sits
+    orphaned in AWS until deleted by hand). This is not a silent destroy of an
+    existing DB.
 
     Turning it on is a two-step, in this order:
 
@@ -203,6 +216,9 @@ resource "aws_efs_file_system" "indexer" {
 
   lifecycle {
     # Holds the markets SQLite DB. Unattended CI must never replace it.
+    # Combined with count = indexer_enabled: flipping enabled back to false
+    # fails plan rather than destroying the filesystem — intentional. See the
+    # indexer_enabled variable description for the state-rm escape hatch.
     prevent_destroy = true
   }
 }
@@ -294,7 +310,10 @@ resource "aws_secretsmanager_secret" "indexer" {
   name        = "${local.name}/indexer"
   description = "Indexer ADMIN_API_KEY and VOYAGER_API_KEY - set out-of-band, never managed by Terraform"
 
-  recovery_window_in_days = 0
+  # 7-day recovery window so disabling (after state-rm of the EFS) does not
+  # immediately drop the admin credential. Version stays unmanaged — no
+  # aws_secretsmanager_secret_version here.
+  recovery_window_in_days = 7
 
   tags = { Name = "${local.name}-indexer" }
 }
@@ -545,9 +564,10 @@ resource "aws_ecs_service" "indexer" {
     aws_efs_mount_target.indexer,
   ]
 
-  lifecycle {
-    ignore_changes = [desired_count]
-  }
+  # Deliberately does NOT copy paymaster's ignore_changes = [desired_count].
+  # Enable is two-phase: create at desired_count = 0, populate the secret, then
+  # set desired_count = 1 and apply. Ignoring desired_count would make that
+  # second apply a no-op and leave the service at zero tasks forever.
 
   tags = { Name = "${local.name}-indexer" }
 }

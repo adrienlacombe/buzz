@@ -104,8 +104,14 @@ paymaster_desired_count = 0
 # paymaster_account_class_hash = "0x0414f62ea1ed35f8c7bd3b794d94efc95e01bccf04e0f47211fc198f7f56f537"
 
 # ── Markets indexer (@the-situation/indexer) ─────────────────────────────────
-# Disabled. indexer_enabled = false means **no resources at all** — same lesson
-# as paymaster: half-adding IAM roles without bootstrap PassRole breaks relay CD.
+# Disabled. indexer_enabled = false means **no resources on the create path** —
+# same lesson as paymaster: half-adding IAM roles without bootstrap PassRole
+# breaks relay CD.
+#
+# Once enabled, setting indexer_enabled = false fails plan (EFS prevent_destroy)
+# so CD cannot wipe the markets SQLite. That is intentional. To disable after
+# enable: terraform state rm 'aws_efs_file_system.indexer[0]' first (and accept
+# losing the count-gated resources). Not a silent destroy of an existing DB.
 #
 # Turning it on, in this order (Adrien applies AWS after the PR merges):
 #
@@ -117,7 +123,8 @@ paymaster_desired_count = 0
 #      Rejects :main / :latest. Do NOT reuse relay_image.
 #   3. put-secret-value ADMIN_API_KEY + VOYAGER_API_KEY (keys only in docs —
 #      see indexer.tf / README). Never commit values.
-#   4. Set indexer_desired_count = 1 and apply again.
+#   4. Set indexer_desired_count = 1 and apply again (indexer service does NOT
+#      ignore_changes desired_count — unlike paymaster — so this apply works).
 #   5. POST /admin/markets for the v1 market (payload in README).
 #   6. Wallet INDEXER_URL = https://markets.bitcoinmarkets.app
 #
