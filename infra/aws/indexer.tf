@@ -74,16 +74,19 @@ variable "indexer_image" {
     Deliberately rejects mutable :main / :latest tags — same rule as
     relay_image — so a local apply cannot quietly un-pin what is running.
 
-    Example pin (Adrien supplies the real registry path at enable time):
+    First published pin (also tagged :sha-94279a1):
 
-      indexer_image = "ghcr.io/<owner>/situation-indexer:0.19.1"
+      indexer_image = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+
+    After the first push, make the GHCR package public (Packages → Change
+    visibility) so ECS can pull without a registry secret.
   EOT
   type        = string
   default     = ""
 
   validation {
     condition     = var.indexer_image == "" || !can(regex(":(main|latest)$", var.indexer_image))
-    error_message = "indexer_image must not use a mutable tag (:main, :latest) — pass an immutable tag (e.g. :0.19.1 or :sha-<7>). Leave empty while indexer_enabled is false."
+    error_message = "indexer_image must not use a mutable tag (:main, :latest) — pass an immutable tag@digest (e.g. :0.19.1@sha256:…). Leave empty while indexer_enabled is false."
   }
 }
 

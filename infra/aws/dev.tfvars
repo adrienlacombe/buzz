@@ -113,14 +113,17 @@ paymaster_desired_count = 0
 # enable: terraform state rm 'aws_efs_file_system.indexer[0]' first (and accept
 # losing the count-gated resources). Not a silent destroy of an existing DB.
 #
+# After the first GHCR push, make ghcr.io/adrienlacombe/the-situation-sdk/indexer
+# public (Packages → Change visibility) so ECS can pull without a registry secret.
+#
 # Turning it on, in this order (Adrien applies AWS after the PR merges):
 #
 #   1. terraform -chdir=infra/aws/bootstrap apply
 #      (PassRole on indexer roles + GetSecretValue Deny on buzz-dev/indexer)
 #   2. Set indexer_enabled = true, indexer_desired_count = 0, and an immutable
 #      indexer_image pin (creates secret/roles/TG without starting a task):
-#        indexer_image = "ghcr.io/<owner>/situation-indexer:0.19.1"
-#      Rejects :main / :latest. Do NOT reuse relay_image.
+#        indexer_image = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
+#      (also tagged :sha-94279a1). Rejects :main / :latest. Do NOT reuse relay_image.
 #   3. put-secret-value ADMIN_API_KEY + VOYAGER_API_KEY (keys only in docs —
 #      see indexer.tf / README). Never commit values.
 #   4. Set indexer_desired_count = 1 and apply again (indexer service does NOT
@@ -132,7 +135,7 @@ paymaster_desired_count = 0
 # Route53 A alias + ALB host-header rule appear only when enabled.
 indexer_enabled       = false
 indexer_desired_count = 0
-# indexer_image = "ghcr.io/<owner>/situation-indexer:0.19.1"
+# indexer_image = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
 
 log_level          = "buzz_relay=info,buzz_db=info,buzz_auth=info,tower_http=warn"
 log_retention_days = 14

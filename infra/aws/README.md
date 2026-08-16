@@ -220,6 +220,10 @@ This is **not** the relay. The container is `@the-situation/indexer` (npm 0.19.1
 allowed while the service is off so relay CD (which only passes `relay_image`)
 keeps working; enabling without an image fails a precondition.
 
+After the first GHCR push, make the package
+`ghcr.io/adrienlacombe/the-situation-sdk/indexer` public (Packages → Change
+visibility) so ECS can pull without a registry secret.
+
 It is an HTTP service on port **8787**, unlike paymaster (egress-only):
 
 - Own security group: ingress from the ALB on 8787 only
@@ -255,9 +259,10 @@ Adrien applies AWS after the PR merges. Order matters — bootstrap first.
    ```hcl
    indexer_enabled       = true
    indexer_desired_count = 0
-   indexer_image         = "ghcr.io/<owner>/situation-indexer:0.19.1"  # immutable
+   indexer_image         = "ghcr.io/adrienlacombe/the-situation-sdk/indexer:0.19.1@sha256:c41cf55281c2060e306d05feb108b1867473edf4dac11a223251b2fc5e0bc596"
    ```
 
+   (Also tagged `:sha-94279a1`; Terraform must use the tag@digest form above.)
    Apply the main stack with the usual `relay_image` pin.
 3. **Populate the unmanaged secret** (keys only here — never commit values):
 
