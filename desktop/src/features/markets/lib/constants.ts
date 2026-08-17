@@ -21,6 +21,8 @@ export const PRODUCT_INDEXER_URL = "https://markets.bitcoinmarkets.app";
  * default** — loopback (`127.0.0.1:8788`) must not ship.
  *
  * Never put `AVNU_API_KEY` or proxy auth tokens in this repo/client.
+ * Product desktop needs no `AVNU_PROXY_AUTH_TOKEN`; that env is only for a
+ * custom non-product `AVNU_PROXY_URL`.
  */
 export const PRODUCT_AVNU_PROXY_URL = "https://paymaster.bitcoinmarkets.app";
 

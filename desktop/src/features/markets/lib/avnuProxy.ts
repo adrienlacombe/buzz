@@ -6,7 +6,8 @@
  * — loopback was local-only and must not ship.
  *
  * Never read or ship `AVNU_API_KEY` / proxy auth tokens here. UI copy must not
- * surface L2 vocabulary.
+ * surface L2 vocabulary. Product host needs no Bearer; custom proxies still do
+ * (handled in the Tauri `place_bet` path, not this module).
  */
 
 import { PRODUCT_AVNU_PROXY_URL } from "./constants";

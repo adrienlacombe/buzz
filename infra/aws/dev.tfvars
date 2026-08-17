@@ -165,7 +165,7 @@ indexer_image         = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-i
 #   3. Main stack applied (SG, IAM, TG, listener rule, Route53, service).
 #   4. avnu_proxy_enabled / desired_count pinned to match live state.
 #   5. Service at desired_count = 1 → https://paymaster.bitcoinmarkets.app
-#      (BIND_ADDR is 0.0.0.0:8788; PROXY_AUTH_TOKEN required off-loopback)
+#      (BIND_ADDR is 0.0.0.0:8788; PROXY_PUBLIC=1 — no Bearer on product /rpc)
 #
 # ACM already has a paymaster.bitcoinmarkets.app SAN. Route53 A alias + ALB
 # host-header rule exist when enabled.
