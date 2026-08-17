@@ -137,7 +137,7 @@ paymaster_desired_count = 0
 # host-header rule exist when enabled.
 indexer_enabled       = true
 indexer_desired_count = 1
-indexer_image         = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:0.19.1@sha256:30915371ba5100dc73ebf2190fef0f384aad512fd8b0861ed942c6f71fd6c5e5"
+indexer_image         = "618867225791.dkr.ecr.eu-west-3.amazonaws.com/buzz-dev-indexer:sha-5c46bbb@sha256:14d7a555d837e05fddd14382199885cb13a677f0890870393f33aff18439f160"
 
 # ── AVNU proxy (buzz-avnu-proxy at paymaster.bitcoinmarkets.app) ─────────────
 # ENABLED and already live in eu-west-3 (account 618867225791) at
