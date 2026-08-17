@@ -148,6 +148,197 @@ fn chain_id_short() -> String {
     std::env::var("STARKNET_CHAIN_ID").unwrap_or_else(|_| "SN_MAIN".to_string())
 }
 
+/// SNIP-29 call as JSON-RPC over the AVNU proxy (snake_case wire names).
+///
+/// starknet.js uses camelCase (`contractAddress` / `entrypoint` / `userAddress`);
+/// the hosted paymaster schema expects `to` / `selector` / `user_address`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29Call {
+    to: String,
+    selector: String,
+    calldata: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29FeeMode {
+    mode: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29Parameters {
+    version: String,
+    fee_mode: Snip29FeeMode,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29Deployment {
+    address: String,
+    class_hash: String,
+    salt: String,
+    calldata: Vec<String>,
+    version: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29InvokeBuild {
+    user_address: String,
+    calls: Vec<Snip29Call>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29InvokeExecute {
+    user_address: String,
+    typed_data: Value,
+    signature: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Snip29TransactionBuild {
+    DeployAndInvoke {
+        deployment: Snip29Deployment,
+        invoke: Snip29InvokeBuild,
+    },
+    Invoke {
+        invoke: Snip29InvokeBuild,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Snip29TransactionExecute {
+    DeployAndInvoke {
+        deployment: Snip29Deployment,
+        invoke: Snip29InvokeExecute,
+    },
+    Invoke {
+        invoke: Snip29InvokeExecute,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29BuildParams {
+    transaction: Snip29TransactionBuild,
+    parameters: Snip29Parameters,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+struct Snip29ExecuteParams {
+    transaction: Snip29TransactionExecute,
+    parameters: Snip29Parameters,
+}
+
+fn sponsored_parameters() -> Snip29Parameters {
+    Snip29Parameters {
+        version: "0x1".into(),
+        fee_mode: Snip29FeeMode {
+            mode: "sponsored".into(),
+        },
+    }
+}
+
+fn snip29_call(call: &PreparedCall) -> Result<Snip29Call, String> {
+    let outside = parse_call(call)?;
+    Ok(Snip29Call {
+        to: outside.to.to_fixed_hex_string(),
+        selector: outside.selector.to_fixed_hex_string(),
+        calldata: outside
+            .calldata
+            .iter()
+            .map(|f| f.to_fixed_hex_string())
+            .collect(),
+    })
+}
+
+fn snip29_deployment(account: &Felt, pk_low: &Felt, pk_high: &Felt) -> Snip29Deployment {
+    Snip29Deployment {
+        address: account.to_fixed_hex_string(),
+        class_hash: NOSTR_ACCOUNT_CLASS_HASH.to_string(),
+        salt: DEPLOY_SALT.to_fixed_hex_string(),
+        calldata: vec![pk_low.to_fixed_hex_string(), pk_high.to_fixed_hex_string()],
+        version: 1,
+    }
+}
+
+fn paymaster_build_deploy_and_invoke(
+    account: &Felt,
+    pk_low: &Felt,
+    pk_high: &Felt,
+    calls: Vec<Snip29Call>,
+) -> Snip29BuildParams {
+    Snip29BuildParams {
+        transaction: Snip29TransactionBuild::DeployAndInvoke {
+            deployment: snip29_deployment(account, pk_low, pk_high),
+            invoke: Snip29InvokeBuild {
+                user_address: account.to_fixed_hex_string(),
+                calls,
+            },
+        },
+        parameters: sponsored_parameters(),
+    }
+}
+
+fn paymaster_build_invoke(account: &Felt, calls: Vec<Snip29Call>) -> Snip29BuildParams {
+    Snip29BuildParams {
+        transaction: Snip29TransactionBuild::Invoke {
+            invoke: Snip29InvokeBuild {
+                user_address: account.to_fixed_hex_string(),
+                calls,
+            },
+        },
+        parameters: sponsored_parameters(),
+    }
+}
+
+fn paymaster_execute_deploy_and_invoke(
+    account: &Felt,
+    pk_low: &Felt,
+    pk_high: &Felt,
+    typed_data: Value,
+    signature: Vec<String>,
+) -> Snip29ExecuteParams {
+    Snip29ExecuteParams {
+        transaction: Snip29TransactionExecute::DeployAndInvoke {
+            deployment: snip29_deployment(account, pk_low, pk_high),
+            invoke: Snip29InvokeExecute {
+                user_address: account.to_fixed_hex_string(),
+                typed_data,
+                signature,
+            },
+        },
+        parameters: sponsored_parameters(),
+    }
+}
+
+fn paymaster_execute_invoke(
+    account: &Felt,
+    typed_data: Value,
+    signature: Vec<String>,
+) -> Snip29ExecuteParams {
+    Snip29ExecuteParams {
+        transaction: Snip29TransactionExecute::Invoke {
+            invoke: Snip29InvokeExecute {
+                user_address: account.to_fixed_hex_string(),
+                typed_data,
+                signature,
+            },
+        },
+        parameters: sponsored_parameters(),
+    }
+}
+
+fn snip29_params_to_value<T: Serialize>(params: &T) -> Result<Value, String> {
+    serde_json::to_value(params).map_err(|e| format!("SNIP-29 serialize: {e}"))
+}
+
 async fn avnu_rpc(method: &str, params: Value) -> Result<Value, String> {
     let body = json!({
         "jsonrpc": "2.0",
@@ -381,7 +572,7 @@ pub async fn place_bet(
         .map_err(|e| e.to_string())?;
     let (pk_low, pk_high) = pubkey_felts(&pubkey_hex).map_err(|e| e.to_string())?;
 
-    let rpc_calls: Vec<Value> = validated
+    let rpc_calls: Vec<Snip29Call> = validated
         .iter()
         .map(|c| {
             let prepared = PreparedCall {
@@ -390,59 +581,24 @@ pub async fn place_bet(
                 calldata: c.calldata.clone(),
             };
             // Touch parse early so bad calldata fails before paying the proxy.
-            let _ = parse_call(&prepared)?;
-            Ok(json!({
-                "contractAddress": c.contract_address,
-                "entrypoint": c.entrypoint,
-                "calldata": c.calldata,
-            }))
+            snip29_call(&prepared)
         })
         .collect::<Result<_, String>>()?;
 
-    let deployment = json!({
-        "address": account.to_fixed_hex_string(),
-        "class_hash": NOSTR_ACCOUNT_CLASS_HASH,
-        "salt": DEPLOY_SALT.to_fixed_hex_string(),
-        "calldata": [
-            pk_low.to_fixed_hex_string(),
-            pk_high.to_fixed_hex_string()
-        ],
-        "version": 1
-    });
-
     // Prefer deploy_and_invoke when undeployed; AVNU accepts this class on mainnet.
-    let build_params = json!({
-        "transaction": {
-            "type": "deploy_and_invoke",
-            "deployment": deployment,
-            "invoke": {
-                "userAddress": account.to_fixed_hex_string(),
-                "calls": rpc_calls
-            }
-        },
-        "parameters": {
-            "version": "0x1",
-            "feeMode": { "mode": "sponsored" }
-        }
-    });
+    // Wire format is SNIP-29 snake_case via serde — never hand-build camelCase JSON.
+    let build_params = snip29_params_to_value(&paymaster_build_deploy_and_invoke(
+        &account,
+        &pk_low,
+        &pk_high,
+        rpc_calls.clone(),
+    ))?;
 
     let built = match avnu_rpc("paymaster_buildTransaction", build_params).await {
         Ok(v) => v,
         Err(_) => {
             // Fallback: account may already be deployed.
-            let invoke_only = json!({
-                "transaction": {
-                    "type": "invoke",
-                    "invoke": {
-                        "userAddress": account.to_fixed_hex_string(),
-                        "calls": rpc_calls
-                    }
-                },
-                "parameters": {
-                    "version": "0x1",
-                    "feeMode": { "mode": "sponsored" }
-                }
-            });
+            let invoke_only = snip29_params_to_value(&paymaster_build_invoke(&account, rpc_calls))?;
             avnu_rpc("paymaster_buildTransaction", invoke_only).await?
         }
     };
@@ -486,45 +642,15 @@ pub async fn place_bet(
         .unwrap_or("invoke");
 
     let execute_params = if tx_type == "deploy_and_invoke" {
-        json!({
-            "transaction": {
-                "type": "deploy_and_invoke",
-                "deployment": {
-                    "address": account.to_fixed_hex_string(),
-                    "class_hash": NOSTR_ACCOUNT_CLASS_HASH,
-                    "salt": DEPLOY_SALT.to_fixed_hex_string(),
-                    "calldata": [
-                        pk_low.to_fixed_hex_string(),
-                        pk_high.to_fixed_hex_string()
-                    ],
-                    "version": 1
-                },
-                "invoke": {
-                    "userAddress": account.to_fixed_hex_string(),
-                    "typedData": typed,
-                    "signature": sig_hex
-                }
-            },
-            "parameters": {
-                "version": "0x1",
-                "feeMode": { "mode": "sponsored" }
-            }
-        })
+        snip29_params_to_value(&paymaster_execute_deploy_and_invoke(
+            &account,
+            &pk_low,
+            &pk_high,
+            typed.clone(),
+            sig_hex,
+        ))?
     } else {
-        json!({
-            "transaction": {
-                "type": "invoke",
-                "invoke": {
-                    "userAddress": account.to_fixed_hex_string(),
-                    "typedData": typed,
-                    "signature": sig_hex
-                }
-            },
-            "parameters": {
-                "version": "0x1",
-                "feeMode": { "mode": "sponsored" }
-            }
-        })
+        snip29_params_to_value(&paymaster_execute_invoke(&account, typed.clone(), sig_hex))?
     };
 
     let executed = avnu_rpc("paymaster_executeTransaction", execute_params).await?;
@@ -642,5 +768,146 @@ mod tests {
         .expect_err("null remainingBlocks must error");
         assert!(null_err.contains("remainingBlocks"));
         assert!(difficulty_halt_status_from_adjustment(&json!({})).is_err());
+    }
+
+    #[test]
+    fn snip29_paymaster_params_use_snake_case_wire_names() {
+        // Live AVNU / buzz-avnu-proxy reject starknet.js camelCase
+        // (userAddress / contractAddress / feeMode) with -32602.
+        let account = Felt::from_hex_unchecked("0x1234");
+        let pk_low = Felt::from_hex_unchecked("0x1");
+        let pk_high = Felt::from_hex_unchecked("0x2");
+        let calls = vec![Snip29Call {
+            to: "0xabc".into(),
+            selector: "0xdef".into(),
+            calldata: vec!["0x3".into()],
+        }];
+
+        let build = snip29_params_to_value(&paymaster_build_deploy_and_invoke(
+            &account,
+            &pk_low,
+            &pk_high,
+            calls.clone(),
+        ))
+        .expect("serialize build");
+        let build_s = build.to_string();
+        assert!(
+            build_s.contains("user_address"),
+            "build must emit user_address: {build_s}"
+        );
+        assert!(
+            build_s.contains("\"to\""),
+            "build calls must emit to: {build_s}"
+        );
+        assert!(
+            build_s.contains("fee_mode"),
+            "build must emit fee_mode: {build_s}"
+        );
+        assert!(
+            !build_s.contains("userAddress"),
+            "must not emit camelCase userAddress: {build_s}"
+        );
+        assert!(
+            !build_s.contains("contractAddress"),
+            "must not emit camelCase contractAddress: {build_s}"
+        );
+        assert!(
+            !build_s.contains("feeMode"),
+            "must not emit camelCase feeMode: {build_s}"
+        );
+        assert!(
+            !build_s.contains("entrypoint"),
+            "must not emit entrypoint (use selector): {build_s}"
+        );
+        assert_eq!(
+            build["parameters"]["fee_mode"]["mode"], "sponsored",
+            "sponsored fee mode must remain"
+        );
+        assert_eq!(
+            build["transaction"]["deployment"]["calldata"],
+            json!([pk_low.to_fixed_hex_string(), pk_high.to_fixed_hex_string()]),
+            "constructor must stay [pk_low, pk_high]"
+        );
+
+        let invoke_build =
+            snip29_params_to_value(&paymaster_build_invoke(&account, calls)).expect("invoke");
+        let invoke_s = invoke_build.to_string();
+        assert!(invoke_s.contains("user_address"));
+        assert!(invoke_s.contains("fee_mode"));
+        assert!(!invoke_s.contains("userAddress"));
+        assert!(!invoke_s.contains("feeMode"));
+
+        let typed = json!({"types": {}, "primaryType": "OutsideExecution"});
+        let execute = snip29_params_to_value(&paymaster_execute_deploy_and_invoke(
+            &account,
+            &pk_low,
+            &pk_high,
+            typed.clone(),
+            vec!["0xaa".into(), "0xbb".into()],
+        ))
+        .expect("serialize execute");
+        let execute_s = execute.to_string();
+        assert!(
+            execute_s.contains("user_address"),
+            "execute must emit user_address: {execute_s}"
+        );
+        assert!(
+            execute_s.contains("typed_data"),
+            "execute must emit typed_data: {execute_s}"
+        );
+        assert!(
+            execute_s.contains("fee_mode"),
+            "execute must emit fee_mode: {execute_s}"
+        );
+        assert!(
+            !execute_s.contains("userAddress"),
+            "must not emit camelCase userAddress: {execute_s}"
+        );
+        assert!(
+            !execute_s.contains("typedData"),
+            "must not emit camelCase typedData: {execute_s}"
+        );
+        assert!(
+            !execute_s.contains("feeMode"),
+            "must not emit camelCase feeMode: {execute_s}"
+        );
+
+        let execute_invoke = snip29_params_to_value(&paymaster_execute_invoke(
+            &account,
+            typed,
+            vec!["0xaa".into()],
+        ))
+        .expect("execute invoke");
+        let ei = execute_invoke.to_string();
+        assert!(
+            ei.contains("user_address") && ei.contains("typed_data") && ei.contains("fee_mode")
+        );
+        assert!(
+            !ei.contains("userAddress") && !ei.contains("typedData") && !ei.contains("feeMode")
+        );
+    }
+
+    #[test]
+    fn snip29_call_maps_entrypoint_to_selector_hex() {
+        let call = PreparedCall {
+            contract_address: "0x0787150e306e6eae6e3f79dea881770e8bbff2c1b8eb490f969669ee945b3135"
+                .into(),
+            entrypoint: "transfer".into(),
+            calldata: vec!["0x1".into(), "0x2".into(), "0x0".into()],
+        };
+        let wire = snip29_call(&call).expect("snip29_call");
+        let v = serde_json::to_value(&wire).unwrap();
+        assert!(v.get("selector").is_some());
+        assert!(v.get("entrypoint").is_none());
+        assert!(v.get("contractAddress").is_none());
+        assert!(v.get("to").is_some());
+        let selector = selector_from_name("transfer").unwrap();
+        assert_eq!(v["selector"], selector.to_fixed_hex_string());
+        assert_eq!(
+            v["to"],
+            felt_from_hex(&call.contract_address)
+                .unwrap()
+                .to_fixed_hex_string()
+        );
     }
 }
