@@ -323,15 +323,18 @@ resource "aws_efs_access_point" "indexer" {
 #     --secret-id "buzz-dev/indexer" \
 #     --secret-string '{
 #       "ADMIN_API_KEY": "<generate and keep offline>",
-#       "VOYAGER_API_KEY": "<voyager explorer API key, or a dummy to boot>"
+#       "VOYAGER_API_KEY": "<Starkscan explorer API key, or a dummy to boot>"
 #     }'
 #
 # Required to start (0.19.1): ADMIN_API_KEY, and VOYAGER_API_KEY or
-# VOYAGER_API_KEYS. Voyager is NOT needed for GET /api/markets after an admin
-# POST (that path is SQLite only) — a dummy key lets the process boot; a real
-# key is needed for event poll. Prefer VOYAGER_API_KEYS (comma-separated pool)
-# in the secret instead of VOYAGER_API_KEY if you want rotation; wire that env
-# name in the secrets block if you switch.
+# VOYAGER_API_KEYS. Voyager/Starkscan is NOT needed for GET /api/markets after
+# an admin POST (that path is SQLite only) — a dummy key lets the process boot;
+# a real key is needed for event poll. With VOYAGER_API_BASE_URL set to
+# https://api.starkscan.co, a Starkscan key in VOYAGER_API_KEY works (image may
+# also accept STARKSCAN_API_KEY as an alias — do not wire that here; keep the
+# AWS secret field VOYAGER_API_KEY). Prefer VOYAGER_API_KEYS (comma-separated
+# pool) in the secret instead of VOYAGER_API_KEY if you want rotation; wire
+# that env name in the secrets block if you switch.
 resource "aws_secretsmanager_secret" "indexer" {
   count = var.indexer_enabled ? 1 : 0
 
@@ -518,18 +521,25 @@ resource "aws_ecs_task_definition" "indexer" {
       #   listen var is PORT (default 3000) — not INDEXER_PORT; binds 0.0.0.0
       #   required to start: ADMIN_API_KEY + VOYAGER_API_KEY|VOYAGER_API_KEYS
       #   also used: STARKNET_NETWORK, STARKNET_RPC_URL, DB_PATH, VOYAGER_API_BASE_URL
+      # Setting VOYAGER_API_BASE_URL to https://api.starkscan.co selects Starkscan
+      # (X-Starkscan-Api-Key, /v1/SN_MAIN/contract/{addr}/events) in
+      # @the-situation/indexer after the-situation-sdk PR 6 (5c46bbb). A
+      # Starkscan key in VOYAGER_API_KEY (or STARKSCAN_API_KEY if the image
+      # accepts that alias) is what the client uses.
       # Optional poll knobs (EVENT/STATE/POSITION_POLL_INTERVAL_MS, VOYAGER_*)
       # are left at binary defaults.
       { name = "PORT", value = tostring(local.indexer_port) },
       { name = "STARKNET_NETWORK", value = "mainnet" },
       { name = "STARKNET_RPC_URL", value = local.indexer_starknet_rpc_url },
-      { name = "VOYAGER_API_BASE_URL", value = "https://api.voyager.online/beta" },
+      { name = "VOYAGER_API_BASE_URL", value = "https://api.starkscan.co" },
       { name = "DB_PATH", value = local.indexer_db_path },
     ]
 
     # valueFrom with a trailing :key:: pulls one field out of the JSON secret.
-    # Voyager is required only to *boot*; GET /api/markets after POST /admin/markets
-    # is SQLite-only, so a dummy VOYAGER_API_KEY is enough until live polling.
+    # Explorer key is required only to *boot*; GET /api/markets after POST
+    # /admin/markets is SQLite-only, so a dummy VOYAGER_API_KEY is enough until
+    # live polling. For live poll with base URL api.starkscan.co, put a
+    # Starkscan key in VOYAGER_API_KEY (secret field name unchanged).
     secrets = [
       { name = "ADMIN_API_KEY", valueFrom = "${aws_secretsmanager_secret.indexer[0].arn}:ADMIN_API_KEY::" },
       { name = "VOYAGER_API_KEY", valueFrom = "${aws_secretsmanager_secret.indexer[0].arn}:VOYAGER_API_KEY::" },
