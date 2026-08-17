@@ -109,8 +109,8 @@ variable "avnu_proxy_desired_count" {
 
     Defaults to 0 so enabling the stack can import the secret and create IAM
     roles without starting a task. Set to 1 once bootstrap is applied, the
-    secret is imported, and BIND_ADDR / PROXY_AUTH_TOKEN are confirmed in the
-    existing secret.
+    secret is imported, and BIND_ADDR / PROXY_PUBLIC / AVNU_API_KEY are
+    confirmed (PROXY_AUTH_TOKEN may remain in the secret unused).
   EOT
   type        = number
   default     = 0
@@ -305,7 +305,7 @@ resource "aws_lb_target_group" "avnu_proxy" {
   vpc_id      = aws_vpc.main.id
 
   # Health: GET /health returns {"status":"ok","service":"buzz-avnu-proxy"}.
-  # JSON-RPC: POST / and POST /rpc (Bearer PROXY_AUTH_TOKEN when off-loopback).
+  # JSON-RPC: POST / and POST /rpc — product path uses PROXY_PUBLIC=1 (no Bearer).
   # Do NOT reuse the relay's /_readiness probe or health port 8080.
   health_check {
     enabled             = true
@@ -383,14 +383,16 @@ resource "aws_ecs_task_definition" "avnu_proxy" {
     ]
 
     environment = [
-      # Non-loopback bind requires PROXY_AUTH_TOKEN (already in the secret).
+      # Product-open paymaster: desktop needs no Bearer. Abuse control = AVNU credits.
+      # PROXY_AUTH_TOKEN may remain in the secret unused; do not inject it here.
       { name = "BIND_ADDR", value = "0.0.0.0:${local.avnu_proxy_port}" },
+      { name = "PROXY_PUBLIC", value = "1" },
     ]
 
     # valueFrom with a trailing :key:: pulls one field out of the JSON secret.
+    # AVNU_API_KEY only — never put the key in terraform values / git.
     secrets = [
       { name = "AVNU_API_KEY", valueFrom = "${aws_secretsmanager_secret.avnu_proxy[0].arn}:AVNU_API_KEY::" },
-      { name = "PROXY_AUTH_TOKEN", valueFrom = "${aws_secretsmanager_secret.avnu_proxy[0].arn}:PROXY_AUTH_TOKEN::" },
     ]
 
     logConfiguration = {

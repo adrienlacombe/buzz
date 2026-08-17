@@ -10,18 +10,18 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    assert_fee_is_first_call, assert_markets_signing_keyring, betting_halted_by_remaining_blocks,
-    build_validated_bet_batch, markets_signing_keyring_name, resolve_avnu_proxy_url,
-    resolve_indexer_url, BetCallHex, NOSTR_ACCOUNT_CLASS_HASH,
+    BetCallHex, NOSTR_ACCOUNT_CLASS_HASH, assert_fee_is_first_call, assert_markets_signing_keyring,
+    avnu_proxy_bearer_token, betting_halted_by_remaining_blocks, build_validated_bet_batch,
+    markets_signing_keyring_name, resolve_avnu_proxy_url, resolve_indexer_url,
 };
 use buzz_core_pkg::outside_execution::{
-    any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
+    Felt, OutsideCall, OutsideExecution, any_caller, felt_from_hex, selector_from_name,
 };
 use buzz_core_pkg::starknet_account::{
-    account_address_from_hex, constructor_calldata, pubkey_felts, sign_tx_hash, DEPLOY_SALT,
+    DEPLOY_SALT, account_address_from_hex, constructor_calldata, pubkey_felts, sign_tx_hash,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::State;
 
 /// A Starknet call as the frontend prepares it (no secrets).
@@ -346,19 +346,16 @@ async fn avnu_rpc(method: &str, params: Value) -> Result<Value, String> {
         "method": method,
         "params": params,
     });
-    // `avnu_proxy_url` already refuses loopback; non-loopback /rpc requires Bearer.
-    let url = format!("{}/rpc", avnu_proxy_url()?);
-    let token = std::env::var("AVNU_PROXY_AUTH_TOKEN")
-        .map(|t| t.trim().to_string())
-        .ok()
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| {
-            "AVNU_PROXY_AUTH_TOKEN is required for non-loopback proxy /rpc \
-             (runtime-only from process env; never bake into the client)"
-                .to_string()
-        })?;
+    // `avnu_proxy_url` already refuses loopback. Product host needs no Bearer;
+    // custom non-product non-loopback still requires AVNU_PROXY_AUTH_TOKEN.
+    let base = avnu_proxy_url()?;
+    let url = format!("{base}/rpc");
+    let bearer = avnu_proxy_bearer_token(&base).map_err(|e| e.to_string())?;
     let client = reqwest::Client::new();
-    let req = client.post(&url).json(&body).bearer_auth(token);
+    let mut req = client.post(&url).json(&body);
+    if let Some(token) = bearer {
+        req = req.bearer_auth(token);
+    }
     let resp = req
         .send()
         .await
@@ -687,8 +684,8 @@ pub async fn markets_indexer_url() -> Result<String, String> {
 mod tests {
     use super::*;
     use buzz_core_pkg::markets::{
-        assert_markets_signing_keyring, betting_halted_by_remaining_blocks, is_human_keyring_name,
-        MarketsError, HUMAN_IDENTITY_KEYRING_NAME,
+        HUMAN_IDENTITY_KEYRING_NAME, MarketsError, assert_markets_signing_keyring,
+        betting_halted_by_remaining_blocks, is_human_keyring_name,
     };
     use serde_json::json;
 

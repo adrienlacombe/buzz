@@ -359,14 +359,14 @@ It is an HTTP service on port **8788**, following the indexer ingress pattern
 (not paymaster egress-only):
 
 - Own security group: ingress from the ALB on 8788 only
-- Own Secrets Manager secret (`buzz-dev/avnu-proxy`) for `AVNU_API_KEY` and
-  `PROXY_AUTH_TOKEN` — unmanaged version; **already exists in AWS** — import
-  on first enable (no `aws_secretsmanager_secret_version`)
+- Own Secrets Manager secret (`buzz-dev/avnu-proxy`) for `AVNU_API_KEY`
+  (and optionally unused `PROXY_AUTH_TOKEN`) — unmanaged version; **already
+  exists in AWS** — import on first enable (no `aws_secretsmanager_secret_version`)
 - ALB HTTPS listener rule (priority 110): host-header
   `paymaster.bitcoinmarkets.app` → avnu-proxy TG
 - Health check `GET /health` → `{"status":"ok","service":"buzz-avnu-proxy"}`
-- JSON-RPC: `POST /` and `POST /rpc` (Bearer `PROXY_AUTH_TOKEN` required —
-  `BIND_ADDR=0.0.0.0:8788` is non-loopback)
+- JSON-RPC: `POST /` and `POST /rpc` with `PROXY_PUBLIC=1` (no Bearer —
+  product desktop needs no token; abuse control = AVNU credits)
 - Default listener action stays the relay
 
 The shared ACM certificate carries a SAN for `paymaster.bitcoinmarkets.app`

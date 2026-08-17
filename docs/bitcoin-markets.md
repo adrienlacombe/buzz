@@ -102,22 +102,23 @@ AVNU_PROXY_URL=https://paymaster.bitcoinmarkets.app   # product host (default)
 stays off).
 
 Set `AVNU_API_KEY` only on the hosted proxy (never in the Tauri binary, repo,
-or client). Non-loopback `/rpc` requires Bearer
-`AVNU_PROXY_AUTH_TOKEN` in the desktop process env at runtime — sourced from
-AWS secret `buzz-dev/avnu-proxy` (never committed; never baked into the
-client). Missing token fails closed; the header is never silently omitted.
+or client). Product desktop needs **no** `AVNU_PROXY_AUTH_TOKEN` /
+`AVNU_PROXY_URL` / `INDEXER_URL` args — the packaged default talks to this
+host without Bearer. `AVNU_PROXY_AUTH_TOKEN` is only for a custom
+non-product `AVNU_PROXY_URL` (fail-closed; never baked into the client).
 
 Proxy process env (server-side only):
 
 ```text
 AVNU_API_KEY=…          # from portal.avnu.fi — never commit
 AVNU_PAYMASTER_URL=https://starknet.paymaster.avnu.fi
-BIND_ADDR=0.0.0.0:8788  # non-loopback in AWS; requires PROXY_AUTH_TOKEN
-PROXY_AUTH_TOKEN=…      # same secret material as AVNU_PROXY_AUTH_TOKEN
+BIND_ADDR=0.0.0.0:8788  # non-loopback in AWS
+PROXY_PUBLIC=1          # product-open /rpc (no Bearer); abuse = AVNU credits
+# PROXY_AUTH_TOKEN=…    # optional; required only when PROXY_PUBLIC is unset
 ```
 
-The proxy is **not** an unauthenticated open relay: there is no `CORS Any`,
-and off-loopback requires Bearer. Health:
+Live AWS sets `PROXY_PUBLIC=1`. Local/dev without that flag still requires
+Bearer off-loopback. No `CORS Any`. Health:
 `GET https://paymaster.bitcoinmarkets.app/health` →
 `{"service":"buzz-avnu-proxy","status":"ok"}`.
 

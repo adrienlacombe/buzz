@@ -82,6 +82,12 @@ pub enum MarketsError {
          (required env / public host, no localhost default)"
     )]
     AvnuProxyUrlLoopback,
+    /// Custom non-product proxy needs a process-env Bearer (never baked).
+    #[error(
+        "AVNU_PROXY_AUTH_TOKEN is required for non-product proxy /rpc \
+         (runtime-only from process env; never bake into the client)"
+    )]
+    AvnuProxyAuthTokenRequired,
     /// `place_bet` call batch failed validation.
     #[error("place_bet call batch rejected: {0}")]
     InvalidBetBatch(String),
@@ -245,6 +251,44 @@ pub fn resolve_avnu_proxy_url_from(raw: Option<&str>) -> Result<String, MarketsE
         return Err(MarketsError::AvnuProxyUrlLoopback);
     }
     Ok(base.to_string())
+}
+
+/// True when `proxy_base` is the shipped product paymaster host.
+///
+/// Product desktop (`just desktop-standalone` / packaged app) talks to this
+/// host with no `AVNU_PROXY_AUTH_TOKEN`. Custom `AVNU_PROXY_URL` stays
+/// fail-closed.
+#[must_use]
+pub fn is_product_avnu_proxy_url(proxy_base: &str) -> bool {
+    proxy_base.trim_end_matches('/') == PRODUCT_AVNU_PROXY_URL.trim_end_matches('/')
+}
+
+/// Bearer for proxy `/rpc`, or `None` on the product host (no token, no header).
+///
+/// `token_env` is the raw `AVNU_PROXY_AUTH_TOKEN` value (tests pass it
+/// explicitly). Product URL never requires or returns a token — even if
+/// `token_env` is set — so packaged builds never send Bearer by accident.
+pub fn avnu_proxy_bearer_token_from(
+    proxy_base: &str,
+    token_env: Option<&str>,
+) -> Result<Option<String>, MarketsError> {
+    if is_product_avnu_proxy_url(proxy_base) {
+        return Ok(None);
+    }
+    let token = token_env
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .ok_or(MarketsError::AvnuProxyAuthTokenRequired)?;
+    Ok(Some(token))
+}
+
+/// Read `AVNU_PROXY_AUTH_TOKEN` from process env (never baked into the binary).
+pub fn avnu_proxy_bearer_token(proxy_base: &str) -> Result<Option<String>, MarketsError> {
+    avnu_proxy_bearer_token_from(
+        proxy_base,
+        std::env::var("AVNU_PROXY_AUTH_TOKEN").ok().as_deref(),
+    )
 }
 
 /// One Starknet call as hex strings (frontend / JSON-RPC shape).
@@ -575,6 +619,41 @@ mod tests {
         assert_eq!(
             resolve_avnu_proxy_url_from(Some("https://paymaster.example/proxy/")).unwrap(),
             "https://paymaster.example/proxy"
+        );
+    }
+
+    #[test]
+    fn product_avnu_proxy_needs_no_auth_token() {
+        assert!(is_product_avnu_proxy_url(PRODUCT_AVNU_PROXY_URL));
+        assert!(is_product_avnu_proxy_url(&format!(
+            "{PRODUCT_AVNU_PROXY_URL}/"
+        )));
+        assert_eq!(
+            avnu_proxy_bearer_token_from(PRODUCT_AVNU_PROXY_URL, None).unwrap(),
+            None
+        );
+        // Stale token must not force a Bearer header on the product path.
+        assert_eq!(
+            avnu_proxy_bearer_token_from(PRODUCT_AVNU_PROXY_URL, Some("ignored")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn custom_non_loopback_avnu_proxy_requires_auth_token() {
+        let custom = "https://paymaster.example.com";
+        assert!(!is_product_avnu_proxy_url(custom));
+        assert_eq!(
+            avnu_proxy_bearer_token_from(custom, None),
+            Err(MarketsError::AvnuProxyAuthTokenRequired)
+        );
+        assert_eq!(
+            avnu_proxy_bearer_token_from(custom, Some("  ")),
+            Err(MarketsError::AvnuProxyAuthTokenRequired)
+        );
+        assert_eq!(
+            avnu_proxy_bearer_token_from(custom, Some("test-only-not-a-real-secret")).unwrap(),
+            Some("test-only-not-a-real-secret".into())
         );
     }
 
