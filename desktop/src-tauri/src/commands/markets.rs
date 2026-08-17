@@ -10,18 +10,18 @@
 
 use crate::app_state::AppState;
 use buzz_core_pkg::markets::{
-    BetCallHex, NOSTR_ACCOUNT_CLASS_HASH, assert_fee_is_first_call, assert_markets_signing_keyring,
-    avnu_proxy_bearer_token, betting_halted_by_remaining_blocks, build_validated_bet_batch,
-    markets_signing_keyring_name, resolve_avnu_proxy_url, resolve_indexer_url,
+    assert_fee_is_first_call, assert_markets_signing_keyring, avnu_proxy_bearer_token,
+    betting_halted_by_remaining_blocks, build_validated_bet_batch, markets_signing_keyring_name,
+    resolve_avnu_proxy_url, resolve_indexer_url, BetCallHex, NOSTR_ACCOUNT_CLASS_HASH,
 };
 use buzz_core_pkg::outside_execution::{
-    Felt, OutsideCall, OutsideExecution, any_caller, felt_from_hex, selector_from_name,
+    any_caller, felt_from_hex, selector_from_name, Felt, OutsideCall, OutsideExecution,
 };
 use buzz_core_pkg::starknet_account::{
-    DEPLOY_SALT, account_address_from_hex, constructor_calldata, pubkey_felts, sign_tx_hash,
+    account_address_from_hex, constructor_calldata, pubkey_felts, sign_tx_hash, DEPLOY_SALT,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tauri::State;
 
 /// A Starknet call as the frontend prepares it (no secrets).
@@ -684,8 +684,8 @@ pub async fn markets_indexer_url() -> Result<String, String> {
 mod tests {
     use super::*;
     use buzz_core_pkg::markets::{
-        HUMAN_IDENTITY_KEYRING_NAME, MarketsError, assert_markets_signing_keyring,
-        betting_halted_by_remaining_blocks, is_human_keyring_name,
+        assert_markets_signing_keyring, betting_halted_by_remaining_blocks, is_human_keyring_name,
+        MarketsError, HUMAN_IDENTITY_KEYRING_NAME,
     };
     use serde_json::json;
 
