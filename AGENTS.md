@@ -200,7 +200,7 @@ place.
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
 | `desktop/src-tauri/src/relay/allowlist.rs` | new | Single-relay host allowlist. Upstream is multi-community by design; this fork ships a client that reaches only `relay.bitcoinmarkets.app`. **Lives under `relay/`, not at the crate root** — see the `relay.rs` row |
 | `desktop/src-tauri/src/native_websocket.rs` | allowlist call in `open_connection` | The transport is the one path every relay session takes, so a host restriction there cannot be bypassed from the UI |
-| `desktop/src-tauri/src/relay.rs` | release builds default to the allowlisted relay; also declares `pub mod allowlist;` | Without the default a release build uses `ws://localhost:3000`, which the allowlist then rejects — a client that cannot connect at all. The module is declared *here* because `lib.rs`'s sorted module list is a permanent conflict site, and because `lib.rs` was itself at the 1000-line desktop ratchet when the move was made in the 2026-08-01 sync. `lib.rs` now carries no fork patch at all. **`relay.rs` has since become the constrained file, and the ratchet is how you find out — as a red `Desktop Core`, not a merge conflict.** The 2026-08-14 sync merged cleanly and pushed it 987 → 1002 against a hard limit of 1000 (`desktop/scripts/check-file-sizes.mjs`; upstream's own `mod get;` was +3, the fork's block +14). Fixed by condensing the fork's two comment blocks to 995, since AGENTS.md is where the reasoning belongs — **do not split or reorganise upstream's `relay.rs` to make room**, that trades 5 lines for a permanent conflict surface. Upstream is extracting submodules from this file on its own (`mod get;`, `mod submit;`), so the pressure should ease; if it does not, the fork's ~11 lines here are the budget to work within |
+| `desktop/src-tauri/src/relay.rs` | release builds default to the allowlisted relay; also declares `pub mod allowlist;` | Without the default a release build uses `ws://localhost:3000`, which the allowlist then rejects — a client that cannot connect at all. The module is declared *here* because `lib.rs`'s sorted module list is a permanent conflict site, and because `lib.rs` was itself at the 1000-line desktop ratchet when the move was made in the 2026-08-01 sync. `lib.rs` now carries no fork patch at all. **`relay.rs` has since become the constrained file, and the ratchet is how you find out — as a red check, not a merge conflict.** Upstream #6187 (2026-08-19 sync) made the file-size policy a first-class gate: it is now `just file-size-check`, run repository-wide as the **`File size policy`** step of the `scripts` CI job, and it no longer hangs off the per-surface `desktop`/`web`/`mobile` path filters. So an overflow here fails on every PR regardless of which paths it touched, and it surfaces under `scripts` rather than `Desktop Core` — run `just file-size-check` locally to reproduce. The 2026-08-14 sync merged cleanly and pushed it 987 → 1002 against a hard limit of 1000 (`desktop/scripts/check-file-sizes.mjs`; upstream's own `mod get;` was +3, the fork's block +14). Fixed by condensing the fork's two comment blocks to 995, since AGENTS.md is where the reasoning belongs — **do not split or reorganise upstream's `relay.rs` to make room**, that trades 5 lines for a permanent conflict surface. Upstream is extracting submodules from this file on its own (`mod get;`, `mod submit;`), so the pressure should ease; if it does not, the fork's ~11 lines here are the budget to work within |
 | `mobile/lib/shared/relay/relay_allowlist.dart` | new | Mobile counterpart. Skips enforcement under `flutter test` (`FLUTTER_TEST`) because upstream tests use `wss://relay.example.com`; editing those 13 files would be a large permanent conflict surface |
 | `mobile/lib/shared/relay/relay_socket.dart` | allowlist call in `connect()` | Transport choke point, as on desktop |
 | `mobile/lib/shared/relay/relay_validation.dart` | allowlist call after the shape checks | One hunk covers all four invite/deep-link call sites; placed after the existing checks so malformed input keeps its original error |
@@ -215,7 +215,7 @@ place.
 | `desktop/src-tauri/Info.plist` | `CFBundleDisplayName`, `CFBundleName` and the three `NS*UsageDescription` strings → `BitcoinMarkets` | `productName` only renames the `.app` directory, the DMG and the mounted volume. These keys are what macOS displays: Finder reads `CFBundleDisplayName`, the menu bar reads `CFBundleName`, and the usage descriptions are quoted verbatim in system permission prompts. Verified against a built canary before patching — the bundle was `BitcoinMarkets.app` while `CFBundleName` was still `Buzz`, so the app asked for the microphone as "Buzz". `CFBundleIdentifier` and the `buzz-desktop` executable name stay |
 | `mobile/ios/Runner/Info.plist` | `CFBundleName` and the three `NS*UsageDescription` strings → `BitcoinMarkets` | The xcconfigs below set `CFBundleDisplayName` (home-screen label); `CFBundleName` is the shorter name iOS falls back to in Settings, and it was still `Buzz`. Usage descriptions appear verbatim in iOS permission prompts |
 | `mobile/ios/Flutter/Debug.xcconfig`, `Release.xcconfig` | `APP_DISPLAY_NAME = BitcoinMarkets` | iOS home-screen name, debug and release |
-| `mobile/android/app/build.gradle.kts` | `app_name` resValue → `BitcoinMarkets`, in `defaultConfig` and the worktree-debug branch | Android launcher label. Two hunks because the worktree label composes onto the same string |
+| `mobile/android/app/build.gradle.kts` | `app_name` resValue → `BitcoinMarkets`, in `defaultConfig` and the worktree-debug branch | Android launcher label. Two hunks because the worktree label composes onto the same string. **Upstream now writes the same resource from a third place**: #6049's `debugAppName` (read from the override file's `appName` property) was extended in the 2026-08-19 sync into an `if (debugAppName != null) … else if (worktreeLabel != null)` chain, so upstream's branch runs *before* the fork's. That conflicts every time upstream touches the chain, and the resolution is *take upstream's new branch, keep the fork's brand in the fallback* — never replace the fallback with upstream's `"Buzz ($worktreeLabel)"`. The fork's literal is only reachable when no explicit `appName` override is set, which is the normal worktree case |
 | `scripts/mobile-worktree-overrides.sh` | branch-labelled debug name | Generates the gitignored per-worktree `APP_DISPLAY_NAME` |
 | `scripts/test-mobile-worktree-overrides.sh` | assertions derive the production name from `mobile-worktree-overrides.sh` instead of matching the literal `Buzz` | Four assertions hardcoded `Buzz` and **failed CI on `main` for three commits** after the rename (`ff5e83c28`…`684a15f50`), cascading into `Desktop` and `Desktop E2E Integration` through their gate steps. Deriving the name tests the contract the file is for — release unlabelled, debug labelled, iOS and Android agreeing — so a future rename cannot fail it for the wrong reason |
 
@@ -1075,14 +1075,14 @@ Run `just test` for integration tests if you touched `buzz-relay`,
 formatting via `stage_fixed`. Pre-commit runs fix variants in parallel (Rust
 fmt, Tauri Rust fmt, desktop biome fix, web biome fix, mobile dart format).
 Auto-fixable issues are fixed and re-staged; unfixable lint issues block the
-commit. **Pre-push hooks** run clippy (workspace + Tauri), desktop TypeScript
-typechecking (`tsc --noEmit`), and fast unit tests in parallel (Rust, desktop
-JS, Tauri Rust, mobile Flutter) — no overlap with pre-commit. Builds are
-CI-only. Run `just fix-all` to auto-fix all formatting in one shot. Run
-`just ci` for the full local gate. Run `just hooks` to
-re-install hooks after env changes. Before agents run Git or hooks, activate the
-repo's Hermit environment (`. ./bin/activate-hermit`); do not rewrite hook
-commands to compensate for an unconfigured shell `PATH`.
+commit. **Pre-push hooks** run the repository-wide differential file-size gate,
+clippy (workspace + Tauri), desktop TypeScript typechecking (`tsc --noEmit`),
+and fast unit tests in parallel (Rust, desktop JS, Tauri Rust, mobile Flutter)
+— no overlap with pre-commit. Builds are CI-only. Run `just fix-all` to auto-fix
+all formatting in one shot. Run `just ci` for the full local gate. Run `just
+hooks` to re-install hooks after env changes. Before agents run Git or hooks,
+activate the repo's Hermit environment (`. ./bin/activate-hermit`); do not
+rewrite hook commands to compensate for an unconfigured shell `PATH`.
 
 **Commit with `git commit -s`.** The required **DCO Check** fails any PR with a commit missing a `Signed-off-by` trailer, and `just hooks` installs a `commit-msg` hook that adds it to commits you create locally (`git rebase` and `git cherry-pick` still need `--signoff`) — if you build commit commands programmatically, include `-s` every time. To repair a branch that already has unsigned commits: `git rebase --signoff main`, then force-push.
 
@@ -1449,11 +1449,18 @@ are frozen.**
 So for any readable text, reach for rem-based Tailwind tokens, never arbitrary
 px:
 
-- ✅ Stock rem tokens (`text-base`, `text-sm`, `text-xs`, …). **Chat body/author
-  text === `text-base` (16px) — chat is the app's base type size**, and the
-  surrounding timeline elements (timestamps, system rows, code, reactions) are
-  deliberate steps on that same stock ramp.
-- ✅ The `text-2xs` (0.6875rem / 11px) and `text-3xs` (0.5rem / 8px) meta-text
+- ✅ Stock rem tokens (`text-base`, `text-sm`, `text-xs`, …) for general
+  interface text. All of these derive from the virtual typography rem and
+  therefore follow the user's font-size preference and Cmd +/- zoom.
+- ✅ Conversation text uses the named `text-message` token. Its
+  **Smaller / Default / Larger contract is 13 / 14 / 15px** before keyboard
+  zoom. Author names use the same conversation-size step; timestamps, system
+  rows, code, and reactions are deliberate neighboring steps on the shared
+  virtual-rem ramp. Keep those relationships tokenized rather than restoring a
+  fixed 16px chat baseline or hardcoding preference-specific values in
+  components.
+- ✅ The `text-2xs` (0.6875rem / 11px at a 16px virtual rem) and `text-3xs`
+  (0.5rem / 8px at a 16px virtual rem) meta-text
   tokens (in `desktop/tailwind.config.js` under `theme.extend.fontSize`) for the
   sub-`text-xs` ramp — timestamps, count badges, tracking labels, tiny glyphs.
   These replaced the dozens of arbitrary `text-[…rem]` literals that had drifted
@@ -1539,10 +1546,10 @@ The mobile app lives in `mobile/` — a Flutter app using Riverpod + Hooks.
 - **Keep widgets small and composable.** One public widget per file; push
   private sub-widgets (`_Foo`) into sibling `part` files under a
   `<page>/` folder rather than growing the page file. Hard ceiling:
-  **1000 lines/file**, enforced by `mobile/scripts/check-file-sizes.mjs` via
-  `just mobile-check` (runs in `just check` + pre-push, mirroring desktop/web).
-  If the guard trips, **split the file — never bump the limit or add an
-  override to slip under it.**
+  **1000 lines/file**, enforced across Desktop, Web, and Mobile by the
+  repository-level `just file-size-check` gate (`just check`, CI, and every
+  pre-push). If the guard trips, **split the file — never bump the limit or add
+  an override to slip under it.**
 - Feature modules must not import from other feature modules — only from
   `shared/`.
 - Use `Grid` tokens for spacing, `Radii` for border radius.
