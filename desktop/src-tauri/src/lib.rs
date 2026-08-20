@@ -26,9 +26,13 @@ mod migration;
 #[cfg(test)]
 mod model_tests;
 mod models;
+mod native_relay_client;
 mod native_websocket;
+mod native_websocket_batch;
 mod nostr_bind;
 pub mod nostr_convert;
+mod observed_unread;
+mod persona_catalog;
 mod prevent_sleep;
 mod ptt_shortcut;
 mod relay;
@@ -42,6 +46,7 @@ mod terminal_runtime;
 mod terminal_transport;
 #[cfg(target_os = "macos")]
 mod tray_menu;
+mod unread_catch_up;
 mod util;
 #[cfg(target_os = "linux")]
 pub mod webkit_rendering;
@@ -197,10 +202,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init());
 
-    // The global-shortcut plugin is omitted from test builds: linking it into
-    // the lib-test binary makes it fail to load on Windows (STATUS_ENTRYPOINT_NOT_FOUND) before any test runs.
-    #[cfg(not(test))]
-    let builder = builder.plugin(ptt_shortcut::global_shortcut_plugin());
+    // The push-to-talk global-shortcut plugin lives in `ptt_shortcut`, next to
+    // the registration lifecycle it drives. Installing it is a no-op in test
+    // builds; see that module for why.
+    let builder = ptt_shortcut::install(builder);
 
     // Register the updater only in configured release builds; omit it locally.
     #[cfg(buzz_updater_enabled)]
@@ -226,6 +231,9 @@ pub fn run() {
         .manage(BuilderlabLogin::default())
         .manage(commands::pairing::PairingHandle::new())
         .manage(terminal_runtime::TerminalSessions::default())
+        .manage(archive::sync::ArchiveSyncState::default())
+        .manage(native_relay_client::NativeRelayClient::default())
+        .manage(observed_unread::ObservedUnreadStore::default())
         .setup(move |app| {
             let app_handle = app.handle().clone();
             #[cfg(target_os = "macos")]
@@ -566,9 +574,11 @@ pub fn run() {
             get_user_notes,
             get_git_identity,
             get_project_repo_snapshot,
+            get_project_repo_file_content,
             get_project_repo_diff,
             get_project_local_repo_diff,
             get_project_local_repo_snapshot,
+            get_project_local_repo_file_content,
             get_project_repo_sync_status,
             list_project_local_repositories,
             clone_project_repository,
@@ -717,6 +727,10 @@ pub fn run() {
             update_managed_agent,
             discover_backend_providers,
             probe_backend_provider,
+            persona_catalog::fetch_persona_catalog,
+            unread_catch_up::unread_catch_up,
+            observed_unread::observed_unread_open_scope,
+            observed_unread::observed_unread_ingest,
             list_personas,
             create_persona,
             update_persona,
@@ -831,6 +845,9 @@ pub fn run() {
             archive::index_observer_channel_id,
             archive::read_unindexed_observer_rows,
             archive::get_agent_usage_series,
+            archive::sync::announce_archive_sync_epoch,
+            archive::sync::start_archive_sync,
+            archive::sync::stop_archive_sync,
             is_auto_update_supported,
             set_window_vibrancy,
             #[cfg(target_os = "macos")]
