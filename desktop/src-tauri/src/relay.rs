@@ -26,8 +26,7 @@ fn configured_env_var(name: &str) -> Option<String> {
 pub fn relay_ws_url() -> String {
     configured_env_var("BUZZ_RELAY_URL")
         .or_else(|| option_env!("BUZZ_DESKTOP_BUILD_RELAY_URL").map(str::to_string))
-        // FORK-LOCAL PATCH (adrienlacombe/buzz): release builds fall back to the
-        // allowlisted relay; loopback would be rejected. None in debug. See AGENTS.md.
+        // FORK-LOCAL (adrienlacombe/buzz): release falls back to the allowlisted relay (loopback would be rejected); None in debug. See AGENTS.md.
         .or_else(allowlist::default_relay_url)
         .unwrap_or_else(|| DEFAULT_RELAY_WS_URL.to_string())
 }
@@ -86,6 +85,12 @@ pub fn relay_http_base_url(relay_url: &str) -> String {
 
     trimmed.to_string()
 }
+
+mod scope;
+pub use scope::{
+    assert_expected_relay_scope, assert_expected_signer, bind_expected_relay_scope,
+    bind_expected_signer, ScopedWorkspaceRelay,
+};
 
 pub fn relay_api_base_url() -> String {
     if let Some(base) = configured_env_var("BUZZ_RELAY_HTTP") {
@@ -535,9 +540,7 @@ pub struct AgentProfileInfo {
 
 // ── Signed-event submission ─────────────────────────────────────────────────
 
-// FORK-LOCAL PATCH (adrienlacombe/buzz): allowlist declared here rather than in
-// lib.rs, whose sorted module list is a permanent conflict site. Kept terse: this
-// file is against the 1000-line ratchet. Reasoning in AGENTS.md.
+// FORK-LOCAL (adrienlacombe/buzz): declared here, not in lib.rs's sorted module list (a permanent conflict site). Terse: this file is at the 1000-line ratchet. See AGENTS.md.
 pub mod allowlist;
 
 mod get;
@@ -545,7 +548,8 @@ pub use get::get_relay_json;
 
 mod submit;
 pub use submit::{
-    submit_event, submit_event_at_with_keys, submit_signed_event_at_with_keys, SubmitEventResponse,
+    submit_event, submit_event_at_created_at, submit_event_at_with_keys,
+    submit_event_with_keys_created_at, submit_signed_event_at_with_keys, SubmitEventResponse,
 };
 
 /// Sign an event with explicit keys and POST it to `/events` with NIP-98 auth.
