@@ -832,6 +832,14 @@ files can raise the same finding under a new number, and without this table the
 analysis gets redone from scratch. Later rows are alerts a sync introduced;
 they are triaged here but **not** dismissed, so they may still be open.
 
+**Test-file false positives are now the dominant sync finding, two syncs running.**
+Both `js/incomplete-*-sanitization` rows below are upstream test files where a
+`String.replace` or `.includes` shapes an assertion rather than guarding a trust
+boundary. When a sync turns `CodeQL` red, check first whether the flagged file is
+byte-identical to `upstream/main` (`git diff --stat upstream/main HEAD -- <file>`)
+and whether the sink is inside a `test(...)` block — that answers most of them
+without reading the query.
+
 **Two families are open on `main` and are not in this table**, because they
 predate it and are not sync findings: 27 `rust/hard-coded-cryptographic-value` in
 `crates/buzz-paymaster` (fork-local, test vectors — worth a proper triage pass
@@ -849,6 +857,7 @@ but the alert list API returns the whole branch.
 | `js/incomplete-multi-character-sanitization` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:35` | `htmlInlineToMarkdown` is a markdown normalizer, not a sanitizer. **False positive** |
 | `js/double-escaping` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:26` | **A real bug**, not exploitable. See below |
 | `js/incomplete-url-substring-sanitization` ×6 | `desktop/src/features/messages/ui/useComposerLinkPreviews.test.mjs:245,374,541,545,562,563` | Arrived in the 2026-08-16 sync and turned `CodeQL` red on the sync PR. Every hit is `assert.ok(tag?.includes("https://relay.example.com/media/…"))` — a **test assertion** that a serialised tag carries an expected URL, not a sanitiser and not a security decision. The rule looks for `url.includes("host")` guarding a trust boundary; there is no untrusted input here. File is byte-identical to `upstream/main`. **False positive** |
+| `js/incomplete-multi-character-sanitization` ×6 | `desktop/src/shared/ui/markdown.test.mjs:1109,1148,1161,1179,1224,1332` | Arrived in the 2026-08-21 sync with upstream #6252 and turned `CodeQL` red on the sync PR — the **same shape as the row above**, one sync later. Every hit is `html.replace(/<[^>]+>/g, "")` stripping tags off `renderToStaticMarkup` output so the test can `assert.equal` on visible text. The rule is right that one pass over `<[^>]+>` is defeatable by nested or malformed markup, and irrelevant here: the input is the test's own fixture, and the result is never rendered, stored or trusted. File is byte-identical to `upstream/main`. **False positive** |
 
 The one genuine defect is `decodeHtmlEntities`, which decodes `&amp;` *before*
 `&lt;`, so `&amp;lt;` becomes a literal `<`. A README containing escaped HTML
