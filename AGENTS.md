@@ -199,7 +199,9 @@ place.
 | `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
 | `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | Inbox and Markets share one primary-menu row | The nav entry point for [Bitcoin markets](#bitcoin-markets-fork-local-feature-31). Packing Markets as its own `SidebarMenuItem` pushed the sortable sections down and broke `virtualization.spec.ts` "06", so the two buttons live in one flex row inside a single height-stable item — the badge is `right-1` rather than upstream's `right-2` because the Inbox button is now half-width. **Upstream develops this file steadily and the fork's hunk sits on its first menu item, so expect a conflict whenever upstream reorders the primary menu.** #6003 (2026-08-20 sync) wrapped the whole header in a fragment and appended `<SidebarProjectsSection />`, which re-indented every line and conflicted; resolution is *take upstream's structure and indentation, re-seat the fork's combined row where upstream's plain Inbox item was* |
-| `desktop/src/features/sidebar/ui/AppSidebar.tsx` + `AppSidebar.types.ts` | `markets` view, `onSelectMarkets`, `"markets"` in the `SidebarSelectedView` union | Threads the Markets selection down to the header row above. `AppSidebar.types.ts` is fork-added and additive; the `AppSidebar.tsx` changes are one-line insertions into existing prop lists, so they resolve as *keep ours, take upstream's* |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` + `AppSidebar.types.ts` | `markets` view, `onSelectMarkets`, `"markets"` in the `SidebarSelectedView` union | Threads the Markets selection down to the header row above. Both are **upstream files** — `AppSidebar.types.ts` arrived with upstream's #4281 huddle redesign, and an earlier version of this row wrongly called it fork-added; the fork only inserts two lines into each. Corrected in the 2026-08-21 sync, where `AppSidebar.types.ts` conflicted for the first time: upstream re-sorted its import block and added a `projectsOverviewActive` prop, and the fork's two lines sit inside the same `selectedView` union and prop list. Resolution is *take upstream's ordering and its new props, keep the fork's `"markets"` member and `onSelectMarkets`* |
+| `desktop/src/app/AppShell.tsx` | `goMarkets` in the `useAppNavigation` destructure; `onSelectMarkets={() => void goMarkets()}` on `<AppSidebar>` | The two lines that wire the Markets nav callback from the router to the sidebar. **Undocumented for eleven syncs and it cost the 2026-08-21 one:** upstream wrapped `<AppSidebar>` in another provider and re-indented the entire prop block, so the second line conflicted with nothing to consult. Resolution is *take upstream's whole block at its indentation and re-seat `onSelectMarkets` after `onSelectProjects`* — the fork changes nothing else in this 1000-line file, so never hand-merge the surrounding props |
+| `desktop/src/features/messages/lib/composerMessageLinkNode.test.mjs` | `CANONICAL_CHANNEL_MESSAGE_HREF` + `MESSAGE_HREF_ATTR` derived from the scheme consts instead of repeated `buzz://` literals | Companion to the `messageLink.test.mjs` row above, from the same PR #32 fix. Upstream keeps appending entity-link fixtures (`PR_ID`/`PR_HREF` in the 2026-08-21 sync) to the same const block, so expect a conflict there — resolve as *keep both const groups*. The `buzz://repo`/`pr`/`issue` literals in this file are deliberate and must not follow the rename while the entity-link scheme decision is open |
 | `desktop/src/features/markets/**`, `desktop/src/app/routes/markets.tsx`, `desktop/src-tauri/src/commands/markets.rs`, `crates/buzz-core/src/markets.rs`, `crates/buzz-avnu-proxy/` | new | The [Bitcoin markets](#bitcoin-markets-fork-local-feature-31) implementation. All additive paths upstream has no counterpart for, so they should never conflict. Their *declaration* sites do — `commands/mod.rs`, `lib.rs`'s invoke handler, `crates/buzz-core/src/lib.rs`, `desktop/package.json`, `tsconfig.json`, `vite.config.ts`, `routes.ts`, `routeTree.gen.ts` — each a one-to-few-line insertion into an existing list |
 | `desktop/src-tauri/src/relay/allowlist.rs` | new | Single-relay host allowlist. Upstream is multi-community by design; this fork ships a client that reaches only `relay.bitcoinmarkets.app`. **Lives under `relay/`, not at the crate root** — see the `relay.rs` row |
 | `desktop/src-tauri/src/native_websocket.rs` | allowlist call in `open_connection` | The transport is the one path every relay session takes, so a host restriction there cannot be bypassed from the UI |
@@ -471,6 +473,28 @@ rendering preview cards for links this fork publishes. Point 2 above is still tr
 what changed is that point 1 is not, and a copied link that goes nowhere is the more
 visible breakage. `crates/buzz-cli/src/links.rs` builds the same links and would need
 the same treatment.
+
+**The 2026-08-21 sync made `links.rs` the more urgent half, and it is no longer only
+about entity links.** Upstream #6359 added `buzz messages thread --link`, a
+user-facing flag whose whole purpose is to accept a link copied out of the desktop
+app. `parse_message_link` (`crates/buzz-cli/src/links.rs:36`) rejects anything whose
+scheme is not exactly `buzz`, while `messageLink.ts` in this fork emits
+`bitcoinmarkets://` — so the fork's own "Copy link" output is refused by its own CLI:
+
+```
+$ buzz messages thread --link 'bitcoinmarkets://message?channel=<uuid>&id=<hex>'
+{"error":"user_error","message":"expected a buzz://message link without credentials or a fragment","retryable":false}
+```
+
+That was verified by running it, not inferred from the diff. Note this is a *narrower
+and cheaper* decision than the entity-link one: a `--link` argument is consumed
+locally by the CLI and never travels inside message content, so accepting
+`bitcoinmarkets://` here costs no interop with upstream clients — the
+"stops upstream clients rendering preview cards" objection simply does not apply.
+The fix is one `||` in that scheme check plus a test, mirroring how `deep_link.rs`
+accepts both inbound. It is still a behavioural change rather than a merge
+resolution, so the sync that found it did not make it, but it does not have to wait
+on the entity-link question.
 
 ### Splitting state from upstream Buzz
 
