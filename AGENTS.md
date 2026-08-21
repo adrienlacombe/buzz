@@ -199,7 +199,9 @@ place.
 | `infra/aws/` | new directory | Terraform deploying the relay to AWS account `618867225791` (`eu-west-3`) on ECS Fargate + RDS + ElastiCache + S3 + EFS, serving `wss://relay.bitcoinmarkets.app`. Upstream deploys via `deploy/charts/buzz` (Helm) and has no Terraform, so this adds only new paths and should never conflict. See [`infra/aws/README.md`](infra/aws/README.md) |
 | `.github/workflows/deploy-aws.yml` | new | Continuous deployment of the relay to AWS on every push to `main`. Runs after `docker.yml` via `workflow_run`, authenticates by OIDC (no stored keys), and applies Terraform with the commit's immutable `:sha-<7>` image |
 | `desktop/src/features/sidebar/ui/AppSidebarPinnedHeader.tsx` | Inbox and Markets share one primary-menu row | The nav entry point for [Bitcoin markets](#bitcoin-markets-fork-local-feature-31). Packing Markets as its own `SidebarMenuItem` pushed the sortable sections down and broke `virtualization.spec.ts` "06", so the two buttons live in one flex row inside a single height-stable item — the badge is `right-1` rather than upstream's `right-2` because the Inbox button is now half-width. **Upstream develops this file steadily and the fork's hunk sits on its first menu item, so expect a conflict whenever upstream reorders the primary menu.** #6003 (2026-08-20 sync) wrapped the whole header in a fragment and appended `<SidebarProjectsSection />`, which re-indented every line and conflicted; resolution is *take upstream's structure and indentation, re-seat the fork's combined row where upstream's plain Inbox item was* |
-| `desktop/src/features/sidebar/ui/AppSidebar.tsx` + `AppSidebar.types.ts` | `markets` view, `onSelectMarkets`, `"markets"` in the `SidebarSelectedView` union | Threads the Markets selection down to the header row above. `AppSidebar.types.ts` is fork-added and additive; the `AppSidebar.tsx` changes are one-line insertions into existing prop lists, so they resolve as *keep ours, take upstream's* |
+| `desktop/src/features/sidebar/ui/AppSidebar.tsx` + `AppSidebar.types.ts` | `markets` view, `onSelectMarkets`, `"markets"` in the `SidebarSelectedView` union | Threads the Markets selection down to the header row above. Both are **upstream files** — `AppSidebar.types.ts` arrived with upstream's #4281 huddle redesign, and an earlier version of this row wrongly called it fork-added; the fork only inserts two lines into each. Corrected in the 2026-08-21 sync, where `AppSidebar.types.ts` conflicted for the first time: upstream re-sorted its import block and added a `projectsOverviewActive` prop, and the fork's two lines sit inside the same `selectedView` union and prop list. Resolution is *take upstream's ordering and its new props, keep the fork's `"markets"` member and `onSelectMarkets`* |
+| `desktop/src/app/AppShell.tsx` | `goMarkets` in the `useAppNavigation` destructure; `onSelectMarkets={() => void goMarkets()}` on `<AppSidebar>` | The two lines that wire the Markets nav callback from the router to the sidebar. **Undocumented for eleven syncs and it cost the 2026-08-21 one:** upstream wrapped `<AppSidebar>` in another provider and re-indented the entire prop block, so the second line conflicted with nothing to consult. Resolution is *take upstream's whole block at its indentation and re-seat `onSelectMarkets` after `onSelectProjects`* — the fork changes nothing else in this 1000-line file, so never hand-merge the surrounding props |
+| `desktop/src/features/messages/lib/composerMessageLinkNode.test.mjs` | `CANONICAL_CHANNEL_MESSAGE_HREF` + `MESSAGE_HREF_ATTR` derived from the scheme consts instead of repeated `buzz://` literals | Companion to the `messageLink.test.mjs` row above, from the same PR #32 fix. Upstream keeps appending entity-link fixtures (`PR_ID`/`PR_HREF` in the 2026-08-21 sync) to the same const block, so expect a conflict there — resolve as *keep both const groups*. The `buzz://repo`/`pr`/`issue` literals in this file are deliberate and must not follow the rename while the entity-link scheme decision is open |
 | `desktop/src/features/markets/**`, `desktop/src/app/routes/markets.tsx`, `desktop/src-tauri/src/commands/markets.rs`, `crates/buzz-core/src/markets.rs`, `crates/buzz-avnu-proxy/` | new | The [Bitcoin markets](#bitcoin-markets-fork-local-feature-31) implementation. All additive paths upstream has no counterpart for, so they should never conflict. Their *declaration* sites do — `commands/mod.rs`, `lib.rs`'s invoke handler, `crates/buzz-core/src/lib.rs`, `desktop/package.json`, `tsconfig.json`, `vite.config.ts`, `routes.ts`, `routeTree.gen.ts` — each a one-to-few-line insertion into an existing list |
 | `desktop/src-tauri/src/relay/allowlist.rs` | new | Single-relay host allowlist. Upstream is multi-community by design; this fork ships a client that reaches only `relay.bitcoinmarkets.app`. **Lives under `relay/`, not at the crate root** — see the `relay.rs` row |
 | `desktop/src-tauri/src/native_websocket.rs` | allowlist call in `open_connection` | The transport is the one path every relay session takes, so a host restriction there cannot be bypassed from the UI |
@@ -471,6 +473,28 @@ rendering preview cards for links this fork publishes. Point 2 above is still tr
 what changed is that point 1 is not, and a copied link that goes nowhere is the more
 visible breakage. `crates/buzz-cli/src/links.rs` builds the same links and would need
 the same treatment.
+
+**The 2026-08-21 sync made `links.rs` the more urgent half, and it is no longer only
+about entity links.** Upstream #6359 added `buzz messages thread --link`, a
+user-facing flag whose whole purpose is to accept a link copied out of the desktop
+app. `parse_message_link` (`crates/buzz-cli/src/links.rs:36`) rejects anything whose
+scheme is not exactly `buzz`, while `messageLink.ts` in this fork emits
+`bitcoinmarkets://` — so the fork's own "Copy link" output is refused by its own CLI:
+
+```
+$ buzz messages thread --link 'bitcoinmarkets://message?channel=<uuid>&id=<hex>'
+{"error":"user_error","message":"expected a buzz://message link without credentials or a fragment","retryable":false}
+```
+
+That was verified by running it, not inferred from the diff. Note this is a *narrower
+and cheaper* decision than the entity-link one: a `--link` argument is consumed
+locally by the CLI and never travels inside message content, so accepting
+`bitcoinmarkets://` here costs no interop with upstream clients — the
+"stops upstream clients rendering preview cards" objection simply does not apply.
+The fix is one `||` in that scheme check plus a test, mirroring how `deep_link.rs`
+accepts both inbound. It is still a behavioural change rather than a merge
+resolution, so the sync that found it did not make it, but it does not have to wait
+on the entity-link question.
 
 ### Splitting state from upstream Buzz
 
@@ -808,6 +832,14 @@ files can raise the same finding under a new number, and without this table the
 analysis gets redone from scratch. Later rows are alerts a sync introduced;
 they are triaged here but **not** dismissed, so they may still be open.
 
+**Test-file false positives are now the dominant sync finding, two syncs running.**
+Both `js/incomplete-*-sanitization` rows below are upstream test files where a
+`String.replace` or `.includes` shapes an assertion rather than guarding a trust
+boundary. When a sync turns `CodeQL` red, check first whether the flagged file is
+byte-identical to `upstream/main` (`git diff --stat upstream/main HEAD -- <file>`)
+and whether the sink is inside a `test(...)` block — that answers most of them
+without reading the query.
+
 **Two families are open on `main` and are not in this table**, because they
 predate it and are not sync findings: 27 `rust/hard-coded-cryptographic-value` in
 `crates/buzz-paymaster` (fork-local, test vectors — worth a proper triage pass
@@ -825,6 +857,7 @@ but the alert list API returns the whole branch.
 | `js/incomplete-multi-character-sanitization` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:35` | `htmlInlineToMarkdown` is a markdown normalizer, not a sanitizer. **False positive** |
 | `js/double-escaping` | `desktop/src/features/projects/ui/ProjectReadmePanel.tsx:26` | **A real bug**, not exploitable. See below |
 | `js/incomplete-url-substring-sanitization` ×6 | `desktop/src/features/messages/ui/useComposerLinkPreviews.test.mjs:245,374,541,545,562,563` | Arrived in the 2026-08-16 sync and turned `CodeQL` red on the sync PR. Every hit is `assert.ok(tag?.includes("https://relay.example.com/media/…"))` — a **test assertion** that a serialised tag carries an expected URL, not a sanitiser and not a security decision. The rule looks for `url.includes("host")` guarding a trust boundary; there is no untrusted input here. File is byte-identical to `upstream/main`. **False positive** |
+| `js/incomplete-multi-character-sanitization` ×6 | `desktop/src/shared/ui/markdown.test.mjs:1109,1148,1161,1179,1224,1332` | Arrived in the 2026-08-21 sync with upstream #6252 and turned `CodeQL` red on the sync PR — the **same shape as the row above**, one sync later. Every hit is `html.replace(/<[^>]+>/g, "")` stripping tags off `renderToStaticMarkup` output so the test can `assert.equal` on visible text. The rule is right that one pass over `<[^>]+>` is defeatable by nested or malformed markup, and irrelevant here: the input is the test's own fixture, and the result is never rendered, stored or trusted. File is byte-identical to `upstream/main`. **False positive** |
 
 The one genuine defect is `decodeHtmlEntities`, which decodes `&amp;` *before*
 `&lt;`, so `&amp;lt;` becomes a literal `<`. A README containing escaped HTML
@@ -1118,9 +1151,22 @@ clippy (workspace + Tauri), desktop TypeScript typechecking (`tsc --noEmit`),
 and fast unit tests in parallel (Rust, desktop JS, Tauri Rust, mobile Flutter)
 — no overlap with pre-commit. Builds are CI-only. Run `just fix-all` to auto-fix
 all formatting in one shot. Run `just ci` for the full local gate. Run `just
-hooks` to re-install hooks after env changes. Before agents run Git or hooks,
-activate the repo's Hermit environment (`. ./bin/activate-hermit`); do not
-rewrite hook commands to compensate for an unconfigured shell `PATH`.
+hooks` to re-install hooks after env changes. Each globbed pre-push lane is
+scoped to the branch's merge-base diff against `origin/main` (`git diff
+origin/main...HEAD`), matching CI's paths-filter — so a lane only fires when this
+branch actually changed a file it covers, never because `origin/main` moved.
+These lanes validate the checked-out HEAD; pushing a non-HEAD ref (explicit
+refspec, `--all`) gets a non-fatal `push-head-scope` warning and relies on CI for
+its path-scoped checks.
+Before agents run Git or hooks, activate the repo's Hermit environment
+(`. ./bin/activate-hermit`) so `./bin` leads `PATH` and the pinned toolchain
+(flutter, dart, lefthook) wins over any Homebrew version; do not
+rewrite hook commands to compensate for an unconfigured shell `PATH`. The
+pre-push hook self-pins regardless: `bin/.lefthookrc` (sourced by the generated
+`.git/hooks/*`) prepends the Hermit `bin/` to `PATH` and pins `LEFTHOOK_BIN`, so
+lane subprocesses resolve the pinned flutter/dart/lefthook even when an
+unactivated shell has Homebrew first. Activating Hermit remains recommended for
+non-hook commands.
 
 **Commit with `git commit -s`.** The required **DCO Check** fails any PR with a commit missing a `Signed-off-by` trailer, and `just hooks` installs a `commit-msg` hook that adds it to commits you create locally (`git rebase` and `git cherry-pick` still need `--signoff`) — if you build commit commands programmatically, include `-s` every time. To repair a branch that already has unsigned commits: `git rebase --signoff main`, then force-push.
 
@@ -1212,16 +1258,17 @@ or invoke with the full path.
 
 `bitcoinmarkets://message?channel=<uuid>&id=<hex>` links reference a specific
 message thread. This fork emits `bitcoinmarkets://` and still accepts `buzz://`,
-so either scheme may turn up — older links in message history use the latter. To
-read the linked thread:
+so either scheme may turn up — older links in message history use the latter.
+Pass the link directly to the CLI:
 
 ```bash
-buzz --format compact messages thread --channel <uuid> --event <hex>
+buzz --format compact messages thread --link '<buzz://message?...>'
 ```
 
-Extract `channel` and `id` from the URL query parameters. The optional
-`thread` parameter (root event ID) can be ignored — `messages thread` resolves
-the full thread from the event ID alone.
+The selected message ID is authoritative: `messages thread` verifies its
+channel and derives its containing root. An optional `thread` parameter is
+accepted only when it matches that derived root. The explicit
+`--channel <uuid> --event <hex>` form remains available.
 
 All reads return sig-stripped JSON arrays; all writes return
 `{event_id, accepted, message}`; creates add the entity ID. Exit codes:

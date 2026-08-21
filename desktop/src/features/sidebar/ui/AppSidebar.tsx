@@ -82,6 +82,7 @@ export function AppSidebar({
   isCreatingChannel,
   isCreatingForum,
   profile,
+  projectsOverviewActive,
   relayConnectionCard,
   selfPresenceStatus,
   errorMessage,
@@ -512,6 +513,7 @@ export function AppSidebar({
                 onSelectMarkets={onSelectMarkets}
                 onSelectPulse={onSelectPulse}
                 onSelectWorkflows={onSelectWorkflows}
+                projectsOverviewActive={projectsOverviewActive}
                 selectedView={selectedView}
               />
 

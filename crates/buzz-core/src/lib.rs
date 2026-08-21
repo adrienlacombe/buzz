@@ -28,6 +28,8 @@ pub mod kind;
 pub mod markets;
 /// Network utilities — SSRF-safe IP classification.
 pub mod network;
+/// NIP-10 thread-marker parsing — shared `root`/`reply` marker resolver.
+pub mod nip10;
 /// Agent observer frame helpers.
 pub mod observer;
 /// SNIP-9 outside execution: the client half of sponsored transactions.
