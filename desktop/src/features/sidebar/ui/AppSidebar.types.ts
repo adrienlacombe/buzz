@@ -1,8 +1,8 @@
+import type { AddCommunityPrefillRequest } from "@/features/communities/addCommunityPrefill";
 import type { LeaveCommunityResult } from "@/features/communities/leaveCommunity";
 import type { Community } from "@/features/communities/types";
-import type { AddCommunityPrefillRequest } from "@/features/communities/addCommunityPrefill";
-import type { SettingsSection } from "@/features/settings/ui/SettingsPanels";
 import type { useSidebarRelayConnectionCard } from "@/features/sidebar/ui/useSidebarRelayConnectionCard";
+import type { SettingsSection } from "@/features/settings/ui/SettingsPanels";
 import type {
   Channel,
   ChannelVisibility,
@@ -32,6 +32,7 @@ export type AppSidebarProps = {
   isCreatingChannel: boolean;
   isCreatingForum: boolean;
   profile?: Profile;
+  projectsOverviewActive: boolean;
   relayConnectionCard: ReturnType<typeof useSidebarRelayConnectionCard>;
   selfPresenceStatus: PresenceStatus;
   errorMessage?: string;
