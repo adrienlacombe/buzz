@@ -76,7 +76,12 @@ case "$android_slug" in
 esac
 
 ios_bundle_id="com.buzz.buzzMobile.${ios_slug}"
-android_app_name="${BUZZ_ANDROID_DEBUG_APP_NAME:-Buzz (${label})}"
+# FORK-LOCAL PATCH (adrienlacombe/buzz): brand rename, matching the
+# APP_DISPLAY_NAME line below. Gradle reads this property in preference to its
+# own worktreeLabel fallback, so leaving upstream's "Buzz" here would label
+# every Android worktree debug build "Buzz (branch)" and silently undo the
+# rename. An explicit BUZZ_ANDROID_DEBUG_APP_NAME still wins, as upstream wrote.
+android_app_name="${BUZZ_ANDROID_DEBUG_APP_NAME:-BitcoinMarkets (${label})}"
 android_suffix="${BUZZ_ANDROID_DEBUG_ID_SUFFIX:-.${android_slug}}"
 
 if [[ "$android_app_name" == *$'\n'* || "$android_app_name" == *$'\r'* ]] || \
