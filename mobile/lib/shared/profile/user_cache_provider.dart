@@ -33,6 +33,11 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
     return null;
   }
 
+  /// Stores a profile that was fetched or updated outside the batch loader.
+  void put(UserProfile profile) {
+    state = {...state, profile.pubkey.toLowerCase(): profile};
+  }
+
   /// Preload profiles for a list of pubkeys (e.g. channel members).
   void preload(List<String> pubkeys) {
     final uncached = pubkeys
@@ -42,6 +47,16 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
     if (uncached.isEmpty) return;
     _pending.addAll(uncached);
     _batchTimer ??= Timer(const Duration(milliseconds: 50), _flushPending);
+  }
+
+  /// Applies a live kind:0 profile event to the cache.
+  ///
+  /// Surfaces that keep a participant-scoped profile subscription can use this
+  /// to update names and avatars without discarding the rest of the cache.
+  void cacheProfileEvent(NostrEvent event) {
+    if (event.kind != 0) return;
+    final profile = _profileFromEvent(event);
+    state = {...state, profile.pubkey: profile};
   }
 
   void _scheduleFetch(String pubkey) {
@@ -65,22 +80,27 @@ class UserCacheNotifier extends Notifier<Map<String, UserProfile>> {
 
       final updated = Map<String, UserProfile>.from(state);
       for (final event in events) {
-        final data = ProfileData.fromEvent(event);
-        final pk = data.pubkey.toLowerCase();
-        updated[pk] = UserProfile(
-          pubkey: pk,
-          displayName: data.displayName,
-          avatarUrl: data.avatarUrl,
-          about: data.about,
-          nip05Handle: data.nip05,
-          ownerPubkey: verifiedOaOwnerPubkey(event.tags, event.pubkey),
-        );
+        final profile = _profileFromEvent(event);
+        updated[profile.pubkey] = profile;
       }
 
       state = updated;
     } catch (_) {
       // Silently fail — we'll just show pubkeys.
     }
+  }
+
+  UserProfile _profileFromEvent(NostrEvent event) {
+    final data = ProfileData.fromEvent(event);
+    final pubkey = data.pubkey.toLowerCase();
+    return UserProfile(
+      pubkey: pubkey,
+      displayName: data.displayName,
+      avatarUrl: data.avatarUrl,
+      about: data.about,
+      nip05Handle: data.nip05,
+      ownerPubkey: verifiedOaOwnerPubkey(event.tags, event.pubkey),
+    );
   }
 }
 
