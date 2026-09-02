@@ -61,7 +61,7 @@
     "@the-situation/collateral": "0.12.1",
     "@the-situation/core": "0.12.0",
     "@the-situation/utils": "0.13.0",
-    "@tiptap/core": "^3.22.3",
+    "@tiptap/core": "^3.30.4",
     "@tiptap/extension-link": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
